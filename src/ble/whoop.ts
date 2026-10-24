@@ -271,12 +271,16 @@ export class WhoopDevice {
     if (this._state === 'connecting') return false;
     const bt = this.bt;
     if (!bt || typeof bt.getDevices !== 'function') return false;
+    const gen = this.gen;
     let devices: BluetoothDevice[];
     try {
-      devices = await bt.getDevices();
+      // Auch dieser Schritt darf nicht ewig hängen (nativ: Bluetooth initialisieren + Gerät nachschlagen).
+      devices = await this.guard(bt.getDevices(), this.t.writeTimeoutMs, 'Gemerktes Band nicht abrufbar (Zeitüberschreitung)', null);
     } catch {
       return false;
     }
+    // Während des Wartens getrennt oder ersetzt? Dann nicht mehr verbinden.
+    if (gen !== this.gen) return false;
     const dev =
       devices.find((d) => d.id === this.lastDeviceId) ??
       devices.find((d) => d.name?.toUpperCase().startsWith('WHOOP')) ??
@@ -398,7 +402,7 @@ export class WhoopDevice {
   }
 
   /** Wartet auf `p`, höchstens `ms`, und bricht ab, sobald die Verbindung abgebaut wird. */
-  private guard<T>(p: Promise<T>, ms: number, timeoutMsg: string, signal = this.abort): Promise<T> {
+  private guard<T>(p: Promise<T>, ms: number, timeoutMsg: string, signal: { promise: Promise<never> } | null = this.abort): Promise<T> {
     p.catch(() => undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const racers: Promise<T>[] = [

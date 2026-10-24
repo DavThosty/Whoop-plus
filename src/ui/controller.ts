@@ -237,6 +237,8 @@ export class AppController {
       if (prior) {
         // Ein automatischer Versuch läuft schon: abwarten statt ein zweites Gerät auf dasselbe Band zu setzen.
         await prior.p;
+        // Inzwischen auf „Abbrechen“ getippt? Dann nicht doch noch verbinden.
+        if (this.userDisconnected) return;
         this.cancelReconnect();
         if (this.state.conn !== 'disconnected') return;
       }
@@ -332,12 +334,14 @@ export class AppController {
     }
   }
 
-  async syncNow(): Promise<void> {
+  /** `quiet`: automatischer Sync (z. B. beim Zurückkehren in die App) – Fehler nur ins Protokoll. */
+  async syncNow(quiet = false): Promise<void> {
     if (!this.device || this.state.conn !== 'connected') return;
     try {
       await this.device.syncHistory();
     } catch (e) {
-      this.fail('Sync', e);
+      if (quiet) this.log(`Automatischer Sync fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+      else this.fail('Sync', e);
     }
   }
 

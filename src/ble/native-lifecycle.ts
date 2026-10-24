@@ -21,7 +21,7 @@ export async function onForeground(ctl: Pick<AppController, 'state' | 'reconnect
     return;
   }
   if (s.conn === 'connected' && (s.lastSync == null || nowSec - s.lastSync > SYNC_MAX_AGE_SEC)) {
-    await ctl.syncNow();
+    await ctl.syncNow(true);
   }
 }
 
