@@ -40,9 +40,14 @@ function LiveScreen() {
         </div>
 
         <div class="w-center">
-          <div class={`w-heart ${w.hr && !paused ? 'beat' : ''}`} style={{ '--beat': beat } as never}><Icon name="heart" size={54} /></div>
-          <div class="w-hr">{w.hr ?? '–'}</div>
-          <div class="small" style={{ color: 'rgba(255,255,255,0.7)', marginTop: 4, fontWeight: 600 }}>bpm</div>
+          <div class="w-ringbox">
+            <Ring size={320} stroke={9} fraction={Math.max(0.004, strain / 21)} color={zc} class="w-ring" track="rgba(255,255,255,0.1)" />
+            <div class="w-ringinner">
+              <div class={`w-heart ${w.hr && !paused ? 'beat' : ''}`} style={{ '--beat': beat } as never}><Icon name="heart" size={44} /></div>
+              <div class="w-hr">{w.hr ?? '–'}</div>
+              <div class="small" style={{ color: 'rgba(255,255,255,0.7)', marginTop: 2, fontWeight: 600 }}>bpm</div>
+            </div>
+          </div>
           <div class="w-zone">{w.hr ? ZONE_NAMES[w.zone] : 'Warte auf Puls …'}</div>
           <div class="zone-scale" aria-hidden="true">
             {ZONE_COLORS.map((c, i) => <i key={c} class={w.zone === i + 1 ? 'on' : ''} style={{ background: c, color: c }} />)}

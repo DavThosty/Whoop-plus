@@ -76,7 +76,7 @@ function BandSection() {
             <Icon name="band" size={24} />
           </span>
           <div class="grow">
-            <div style={{ fontWeight: 700, fontSize: 17 }}>{s.info?.name ?? 'Whoop 4.0'}{s.demo && ' (Demo)'}</div>
+            <div style={{ fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.info?.name ?? 'Whoop 4.0'}{s.demo && ' · Demo'}</div>
             <div class="small muted">{connLabel(s.conn)}{s.postSync || s.computing ? ' · berechne …' : ''}</div>
           </div>
           {s.battery && <BatteryBadge percent={s.battery.percent} charging={s.battery.charging} />}
@@ -96,7 +96,7 @@ function BandSection() {
         ) : (
           <div class="btns two">
             <button class="btn blue" disabled={s.conn === 'syncing'} onClick={() => app.syncNow()}>
-              <Icon name="sync" /> {s.conn === 'syncing' ? 'Synchronisiere …' : 'Jetzt syncen'}
+              <Icon name="sync" /> {s.conn === 'syncing' ? 'Sync läuft …' : 'Sync jetzt'}
             </button>
             <button class="btn" onClick={() => app.disconnect()}>Trennen</button>
           </div>
@@ -118,7 +118,7 @@ function BandSection() {
         <GlassCard title="Steuerung">
           <div class="btns two">
             <button class="btn" onClick={() => app.buzz()}><Icon name="vibrate" /> Vibrieren</button>
-            <button class="btn" onClick={() => app.setLive(!s.liveOn)}><Icon name="heart" /> {s.liveOn ? 'Live-Puls aus' : 'Live-Puls an'}</button>
+            <button class="btn" onClick={() => app.setLive(!s.liveOn)}><Icon name="heart" /> {s.liveOn ? 'Live aus' : 'Live an'}</button>
           </div>
           <div style={{ marginTop: 16 }}>
             <div class="small muted" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Icon name="alarm" size={15} /> Vibrationswecker</div>
@@ -209,11 +209,14 @@ function DataSection() {
   const s = useApp();
   const w = useStore(workout);
   const workouts = useWorkouts(w.version);
-  const fmt = (ts: number | null | undefined) => (ts ? new Date(ts * 1000).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }) : '–');
+  const fmt = (ts: number | null | undefined) => (ts ? new Date(ts * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '–');
+  const count = s.stats?.count ?? 0;
+  const big = count >= 100_000;
+  const countText = big ? Math.round(count / 1000).toLocaleString('de-DE') : count.toLocaleString('de-DE');
   return (
     <GlassCard>
       <div class="stats">
-        <Stat value={(s.stats?.count ?? 0).toLocaleString('de-DE')} label="Datensätze" />
+        <Stat value={countText} unit={big ? 'Tsd.' : undefined} label="Datensätze" />
         <Stat value={fmt(s.stats?.oldest)} label="Ältester" />
         <Stat value={fmt(s.stats?.newest)} label="Neuester" />
       </div>
@@ -229,10 +232,11 @@ function DataSection() {
           Der Browser garantiert keine dauerhafte Speicherung. Exportiere regelmäßig eine Sicherung.
         </div>
       )}
-      <div class="btns two" style={{ marginTop: 14 }}>
-        <button class="btn" onClick={() => app.exportData()}>Sicherung exportieren</button>
-        <label class="btn" style={{ cursor: 'pointer' }}>
-          Sicherung einspielen
+      <div class="small muted" style={{ marginTop: 16, marginBottom: 8, fontWeight: 600, fontSize: 12 }}>Sicherung (JSON)</div>
+      <div class="btns two">
+        <button class="btn" onClick={() => app.exportData()} aria-label="Sicherung exportieren">Exportieren</button>
+        <label class="btn" style={{ cursor: 'pointer' }} aria-label="Sicherung einspielen">
+          Einspielen
           <input
             type="file" accept="application/json,.json" style={{ display: 'none' }}
             onChange={(e) => {

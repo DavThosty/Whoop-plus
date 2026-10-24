@@ -184,8 +184,14 @@ function LiveCard() {
       <div class="live-row">
         <div class="live-hr">
           <span class={`heart ${hr ? 'beat' : ''}`} style={{ animationDuration: beat }}><Icon name="heart" /></span>
-          <span class="val">{hr ?? '–'}</span>
-          <span class="muted small">bpm</span>
+          {hr != null ? (
+            <>
+              <span class="val">{hr}</span>
+              <span class="muted small">bpm</span>
+            </>
+          ) : (
+            <span class="muted" style={{ fontSize: 15, fontWeight: 600 }}>{s.liveOn ? 'Warte auf Puls …' : 'Live-Puls ist aus'}</span>
+          )}
         </div>
         <button class="btn small" disabled={busy} onClick={() => app.setLive(!s.liveOn)}>
           {s.liveOn ? 'Live aus' : 'Live an'}

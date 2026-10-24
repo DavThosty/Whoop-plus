@@ -151,8 +151,8 @@ export function GlassCard(props: {
           </div>
           {props.right}
           {props.help && !props.right && (
-            <button class="linkbtn" onClick={(e) => { e.stopPropagation(); props.help!(); }} aria-label="Wie wird gerechnet?">
-              <Icon name="info" /> Wie berechnet?
+            <button class="helpbtn" onClick={(e) => { e.stopPropagation(); props.help!(); }} aria-label="Wie wird gerechnet?" title="Wie wird gerechnet?">
+              <Icon name="info" />
             </button>
           )}
           {open && !props.right && !props.help && <Icon name="chevR" class="chev" />}
@@ -163,11 +163,12 @@ export function GlassCard(props: {
   );
 }
 
-export function Stat(props: { value: string; unit?: string; label: string }) {
+export function Stat(props: { value: string; unit?: string; label: string; sub?: string }) {
   return (
     <div class="stat">
       <div class="v">{props.value}{props.unit && props.value !== '–' && <small>{props.unit}</small>}</div>
       <div class="k">{props.label}</div>
+      {props.sub && <div class="s">{props.sub}</div>}
     </div>
   );
 }
@@ -358,9 +359,11 @@ export function LineChart(props: {
             </g>
           );
         })()}
-        {props.xLabels?.map((l, i) => (
-          <text key={i} x={sx(l.x)} y={H - 5} text-anchor="middle">{l.label}</text>
-        ))}
+        {props.xLabels?.map((l, i) => {
+          const x = sx(l.x);
+          const anchor = x > W - padR - 18 ? 'end' : x < padL + 12 ? 'start' : 'middle';
+          return <text key={i} x={anchor === 'end' ? W - padR : x} y={H - 5} text-anchor={anchor}>{l.label}</text>;
+        })}
       </svg>
     </div>
   );

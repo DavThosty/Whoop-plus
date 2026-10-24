@@ -21,7 +21,7 @@ const EASE = 'cubic-bezier(0.22, 0.9, 0.24, 1)';
  * Vollbildansicht, die sich aus dem Rechteck der angetippten Karte öffnet (clip-path)
  * und beim Schließen dorthin zurückfährt.
  */
-export function Expand(props: { rect: DOMRect | null; title: string; onClose: () => void; children: ComponentChildren; right?: ComponentChildren }) {
+export function Expand(props: { rect: DOMRect | null; title: string; onClose: () => void; children: ComponentChildren; right?: ComponentChildren; glow?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [closing, setClosing] = useState(false);
@@ -68,7 +68,7 @@ export function Expand(props: { rect: DOMRect | null; title: string; onClose: ()
 
   return (
     <div class="detail" ref={ref} role="dialog" aria-label={props.title}>
-      <div class="bg-glow" aria-hidden="true" style={{ position: 'fixed' }}><div class="grain" /></div>
+      <div class="bg-glow" aria-hidden="true" style={props.glow ? ({ '--glow': props.glow } as never) : undefined}><div class="grain" /></div>
       <div class="detail-inner" ref={inner}>
         <div class="detail-head">
           <button class="circle-btn" aria-label="Zurück" onClick={close}><Icon name="chevL" /></button>
@@ -89,10 +89,12 @@ const TITLES: Record<DetailKind, string> = {
   rhr: 'Ruhepuls',
 };
 
+const GLOWS: Partial<Record<DetailKind, string>> = { strain: COLORS.blue, sleep: COLORS.sleep, hrv: COLORS.green, rhr: COLORS.hr };
+
 export function DetailView(props: { kind: DetailKind; date: string; rect: DOMRect | null }) {
   const label = dateLabel(props.date);
   return (
-    <Expand rect={props.rect} title={`${TITLES[props.kind]}`} onClose={() => flow.closeDetail()} right={<span class="pill" style={{ cursor: 'default' }}>{label}</span>}>
+    <Expand rect={props.rect} title={`${TITLES[props.kind]}`} glow={GLOWS[props.kind]} onClose={() => flow.closeDetail()} right={<span class="pill" style={{ cursor: 'default' }}>{label}</span>}>
       {props.kind === 'recovery' && <RecoveryDetail date={props.date} />}
       {props.kind === 'strain' && <StrainDetail date={props.date} />}
       {props.kind === 'sleep' && <SleepContent date={props.date} />}
@@ -136,9 +138,16 @@ function RecoveryDetail(props: { date: string }) {
 
       {c && (
         <GlassCard title="Was die Recovery bestimmt" help={() => setTopic('recovery')}>
-          <Contribution label="HRV" weight="60 %" value={c.contributions.hrv} />
-          <Contribution label="Ruhepuls" weight="25 %" value={c.contributions.rhr} />
-          <Contribution label="Schlaf" weight="15 %" value={c.contributions.sleep} />
+          {(() => {
+            const scale = Math.max(0.3, Math.abs(c.contributions.hrv), Math.abs(c.contributions.rhr), Math.abs(c.contributions.sleep)) * 1.1;
+            return (
+              <>
+                <Contribution label="HRV" weight="60 %" value={c.contributions.hrv} scale={scale} />
+                <Contribution label="Ruhepuls" weight="25 %" value={c.contributions.rhr} scale={scale} />
+                <Contribution label="Schlaf" weight="15 %" value={c.contributions.sleep} scale={scale} />
+              </>
+            );
+          })()}
           <div class="small faint" style={{ marginTop: 12 }}>
             Balken nach rechts heben die Recovery, nach links senken sie. Gewichteter Beitrag der Abweichung vom persönlichen Normalwert (z-Wert × Gewicht).
           </div>
@@ -148,9 +157,9 @@ function RecoveryDetail(props: { date: string }) {
       {day && (
         <GlassCard title="Heute vs. Normalwert">
           <div class="stats">
-            <Stat value={num(v.hrv)} unit="ms" label={`HRV · Ø ${num(v.hrvTypical)}`} />
-            <Stat value={num(v.rhr)} unit="bpm" label={`Ruhepuls · Ø ${num(v.rhrMean)}`} />
-            <Stat value={day.sleepPerformance == null ? '–' : `${Math.round(day.sleepPerformance)}`} unit="%" label="Schlaf · Ref. 85" />
+            <Stat value={num(v.hrv)} unit="ms" label="HRV" sub={`Normal ${num(v.hrvTypical)}`} />
+            <Stat value={num(v.rhr)} unit="bpm" label="Ruhepuls" sub={`Normal ${num(v.rhrMean)}`} />
+            <Stat value={day.sleepPerformance == null ? '–' : `${Math.round(day.sleepPerformance)}`} unit="%" label="Schlaf" sub="Referenz 85" />
           </div>
           <div class="small faint" style={{ marginTop: 10 }}>Baseline aus {br?.baselineNights ?? day.baselineNights} Nächten.</div>
         </GlassCard>
@@ -169,8 +178,8 @@ function RecoveryDetail(props: { date: string }) {
   );
 }
 
-function Contribution(props: { label: string; weight: string; value: number }) {
-  const max = 1.2;
+function Contribution(props: { label: string; weight: string; value: number; scale: number }) {
+  const max = props.scale;
   const w = Math.min(50, (Math.abs(props.value) / max) * 50);
   const pos = props.value >= 0;
   const color = pos ? COLORS.green : COLORS.red;

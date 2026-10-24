@@ -3,7 +3,7 @@ import type { ExplainKey } from '../../analytics';
 import { useTween } from '../anim';
 import { GlassCard, Hypnogram, Icon, LineChart, Ring, Stat } from '../components';
 import { ExplainSheet } from '../explain';
-import { clock, COLORS, duration, num } from '../format';
+import { clock, COLORS, duration, durationShort, num } from '../format';
 import { useApp, useDay, useMinuteHr } from '../hooks';
 import { DayNav } from './DayNav';
 
@@ -59,9 +59,9 @@ export function SleepContent(props: { date: string }) {
           <span><i style={{ background: COLORS.yellow }} />Wach</span>
         </div>
         <div class="stats" style={{ marginTop: 14 }}>
-          <Stat value={duration(total)} label="Im Bett" />
+          <Stat value={durationShort(total)} unit="h" label="Im Bett" />
           <Stat value={`${Math.round(sleep.efficiency * 100)}`} unit="%" label="Effizienz" />
-          <Stat value={`${sleep.wakeEpisodes}`} unit="×" label={`Wach · ${duration(sleep.awakeMin)}`} />
+          <Stat value={`${sleep.wakeEpisodes}`} unit="×" label="Wachphasen" sub={`${duration(sleep.awakeMin)} wach`} />
         </div>
       </GlassCard>
 

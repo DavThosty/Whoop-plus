@@ -63,10 +63,10 @@ class Flow {
   /** Zeremonie beendet (auch übersprungen). Bei Erfolg für heute merken und ggf. die Story zeigen. */
   async endCeremony(ok: boolean, skipped = false) {
     this.set({ ceremony: false });
-    if (ok) {
-      await setKv('ceremonyDate', today()).catch(() => {});
-      if (!skipped) await this.maybeAutoStory(true);
-    } else if (!skipped) {
+    // Auch beim Überspringen für heute merken – sonst käme sie beim nächsten Auto-Sync wieder.
+    if (ok || skipped) await setKv('ceremonyDate', today()).catch(() => {});
+    if (ok && !skipped) await this.maybeAutoStory(true);
+    else if (!ok && !skipped) {
       this.suppressCeremonyUntil = Date.now() + CEREMONY_RETRY_MS;
     }
   }

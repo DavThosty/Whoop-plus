@@ -136,7 +136,7 @@ function SleepSlide(props: { day: import('../../types').DailySummary | null }) {
   return (
     <div class="slide">
       <div class="greet" style={{ animationDelay: '0.05s' }}>{greeting()}</div>
-      <h2 class="headline" style={{ animationDelay: '0.12s' }}>Dein Schlaf-Rückblick</h2>
+      <h2 class="headline" style={{ animationDelay: '0.12s' }}>Deine Nacht im Rückblick</h2>
       <div style={{ marginTop: 26, animationDelay: '0.2s' }}>
         <div class="s-big">{Math.floor(mins / 60)}<small>h</small>{String(mins % 60).padStart(2, '0')}<small>min</small></div>
         <div class="times">
