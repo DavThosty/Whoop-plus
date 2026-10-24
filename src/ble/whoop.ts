@@ -403,11 +403,11 @@ export class WhoopDevice {
 
   private async syncClock(gen: number): Promise<void> {
     const tol = this.t.clockToleranceSec;
-    const attempt = async (legacy9: boolean): Promise<number | null> => {
+    const attempt = async (): Promise<number | null> => {
       try {
-        await this.send(Opcode.SET_CLOCK, (s) => cmd.setClock(s, this.now(), legacy9), 'optional');
+        await this.send(Opcode.SET_CLOCK, (s) => cmd.setClock(s, this.now()), 'optional');
       } catch (e) {
-        this.log(`SET_CLOCK${legacy9 ? ' (9 Byte)' : ''} fehlgeschlagen: ${toError(e).message}`);
+        this.log(`SET_CLOCK fehlgeschlagen: ${toError(e).message}`);
       }
       this.check(gen);
       try {
@@ -420,11 +420,11 @@ export class WhoopDevice {
         return null;
       }
     };
-    let off = await attempt(false);
+    let off = await attempt();
     if (off !== null && Math.abs(off) > tol) {
-      this.log(`Banduhr weicht nach SET_CLOCK um ${off.toFixed(1)} s ab – versuche 9-Byte-Form`);
+      this.log(`Banduhr weicht nach SET_CLOCK um ${off.toFixed(1)} s ab – zweiter Versuch`);
       this.check(gen);
-      off = await attempt(true);
+      off = await attempt();
     }
     if (off === null) this.log('Warnung: Banduhr konnte nicht überprüft werden');
     else if (Math.abs(off) > tol) this.log(`Warnung: Banduhr weicht um ${off.toFixed(1)} s ab`);

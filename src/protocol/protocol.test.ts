@@ -93,7 +93,7 @@ describe('Kommandorahmen (byte-genau)', () => {
     const v = new DataView(inner.buffer);
     expect(v.getUint32(3, true)).toBe(1700000000);
     expect(v.getUint32(7, true)).toBe(16384);
-    expect(cmd.setClock(1, 0, true).length).toBe(20); // 9-Byte-Form → 16 Byte inner
+    expect(cmd.setClock(1, 0).length).toBe(20); // 3 + 8 Byte → auf 12 aufgefüllt
   });
 
   it('NEVER_SEND-Opcodes werfen', () => {

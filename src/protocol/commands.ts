@@ -36,14 +36,13 @@ export const toggleRealtimeHr = (seq: number, on: boolean) =>
 
 /**
  * Uhr stellen: u32 Sekunden + u32 Subsekunden (1/32768 s; obere 2 Bytes 0) = 8 Bytes.
- * `legacy9` hängt ein zusätzliches Nullbyte an (9-Byte-Form, die manche Firmware erwartet).
+ * Hinweis: Die in NOOP erwähnte 9-Byte-Form (+ ein Nullbyte) ist nach dem Auffüllen auf
+ * ein Vielfaches von 4 byte-identisch mit dieser 8-Byte-Form.
  */
-export function setClock(seq: number, date: Date | number, legacy9 = false): Uint8Array {
+export function setClock(seq: number, date: Date | number): Uint8Array {
   const ms = typeof date === 'number' ? date : date.getTime();
   const { sec, subsec } = toStrapTime(ms);
-  const p = [...u32le(sec), ...u32le(subsec)];
-  if (legacy9) p.push(0);
-  return buildCommand(seq, Opcode.SET_CLOCK, p);
+  return buildCommand(seq, Opcode.SET_CLOCK, [...u32le(sec), ...u32le(subsec)]);
 }
 
 export const getClock = (seq: number) => buildCommand(seq, Opcode.GET_CLOCK);
