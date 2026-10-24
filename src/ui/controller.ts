@@ -1,11 +1,13 @@
 // Zentrale App-Logik: verbindet Band (BLE), lokalen Speicher und Auswertung.
 import { dayBounds, localDateString, sleepWindow } from '../analytics';
+import { isNativeApp, platformBluetooth } from '../ble/platform';
 import { WhoopDevice } from '../ble/whoop';
 import {
   exportBackup, getKv, getProfile, importBackup, pruneSamples, putSamples, requestPersistence,
   sampleBounds, setKv, setProfile, storageEstimate,
 } from '../store/db';
 import { recomputeRange } from '../store/pipeline';
+import { shareFileNative } from '../store/share-file';
 import type { ConnectionState, DeviceInfo, LiveHr, Profile, SampleRecord, SyncProgress } from '../types';
 import { addDays, today } from './format';
 
@@ -44,7 +46,7 @@ const RECONNECT_DELAYS_MS = [5_000, 15_000, 60_000];
 
 export class AppController {
   state: AppState = {
-    supported: WhoopDevice.isSupported(),
+    supported: WhoopDevice.isSupported(platformBluetooth()),
     demo: false,
     conn: 'disconnected',
     info: null,
@@ -139,9 +141,10 @@ export class AppController {
     this.deviceOff = [];
     this.device?.disconnect().catch(() => {});
 
+    const bt = bluetooth ?? platformBluetooth();
     const dev = new WhoopDevice({
       sink: (records) => this.storeHistory(records),
-      ...(bluetooth ? { bluetooth: bluetooth as never } : {}),
+      ...(bt ? { bluetooth: bt as never } : {}),
     });
     this.deviceOff = [
       dev.on('state', (conn) => this.onState(conn)),
@@ -192,6 +195,13 @@ export class AppController {
       if (/cancel|abgebrochen|NotFoundError|chosen/i.test(msg)) this.log(`Verbindung abgebrochen: ${msg}`);
       else this.fail('Verbindung fehlgeschlagen', e);
     }
+  }
+
+  /** Verbindet ohne Auswahldialog mit dem gemerkten Band – nicht nach „Trennen“ und nicht in der Demo. */
+  async reconnectRemembered(): Promise<void> {
+    if (this.state.demo || this.userDisconnected || this.state.conn !== 'disconnected' || !this.state.supported) return;
+    this.cancelReconnect();
+    await this.tryReconnect();
   }
 
   private async tryReconnect(): Promise<void> {
@@ -304,6 +314,7 @@ export class AppController {
     try {
       const blob = await exportBackup();
       const name = `whoop-plus-backup-${today()}.json`;
+      if (isNativeApp()) return await shareFileNative(blob, name, 'Whoop Plus Sicherung');
       const file = new File([blob], name, { type: 'application/json' });
       const nav = navigator as Navigator & { canShare?(d: { files: File[] }): boolean };
       if (nav.canShare?.({ files: [file] })) {

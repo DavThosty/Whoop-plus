@@ -1,0 +1,115 @@
+# Baut die native iOS-App (unsigniert) und veröffentlicht sie als Release "ios-latest".
+# Die IPA wird auf dem iPhone von SideStore mit der eigenen (kostenlosen) Apple-ID signiert – siehe docs/IOS.md.
+name: iOS-Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: IPA bauen
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ios-latest
+      IPA_NAME: WhoopPlus.ipa
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v6
+
+      - name: Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Abhängigkeiten
+        run: npm ci
+
+      - name: Tests
+        run: npm test
+
+      - name: Web-Oberfläche bauen
+        run: npm run build
+
+      - name: Capacitor-Sync (Web-Dateien + Swift-Pakete)
+        run: npx cap sync ios
+
+      - name: Swift-Paket-Cache
+        uses: actions/cache@v5
+        with:
+          path: spm
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/CapApp-SPM/Package.swift', 'package-lock.json') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Versionsnummern
+        id: ver
+        run: |
+          echo "marketing=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          xcodebuild -version
+
+      - name: Xcode-Build (unsigniert, Gerät)
+        run: |
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            -clonedSourcePackagesDirPath spm \
+            -quiet \
+            MARKETING_VERSION="${{ steps.ver.outputs.marketing }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.ver.outputs.build }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: IPA packen
+        run: |
+          APP=build/Build/Products/Release-iphoneos/App.app
+          test -f "$APP/public/index.html" || { echo "::error::Web-Dateien fehlen in App.app"; exit 1; }
+          echo "CFBundleVersion: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
+          echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+          rm -rf ipa && mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          (cd ipa && zip -qry "../$IPA_NAME" Payload)
+          ls -lh "$IPA_NAME"
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v6
+        with:
+          name: WhoopPlus-${{ steps.ver.outputs.marketing }}-${{ steps.ver.outputs.build }}
+          path: ${{ env.IPA_NAME }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Release "ios-latest" ersetzen
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
+          NOTES="Automatischer Build ${{ steps.ver.outputs.marketing }} (${{ steps.ver.outputs.build }}) von ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC').
+
+          Unsigniert – Installation und Aktualisierung über SideStore, siehe docs/IOS.md."
+          gh release create "$RELEASE_TAG" "$IPA_NAME" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Whoop Plus iOS ${{ steps.ver.outputs.marketing }} (${{ steps.ver.outputs.build }})" \
+            --notes "$NOTES"

@@ -99,75 +99,8 @@ export function ProfilePage() {
         </div>
       </Card>
 
-      <AccountCard />
-
       {topic && <ExplainSheet topic={topic} onClose={() => setTopic(null)} />}
     </div>
-  );
-}
-
-// Der Server akzeptiert POST-Anfragen an /api nur als JSON (CSRF-Schutz).
-const JSON_POST: RequestInit = {
-  method: 'POST',
-  credentials: 'same-origin',
-  headers: { 'Content-Type': 'application/json' },
-  body: '{}',
-};
-
-function AccountCard() {
-  const [pair, setPair] = useState<{ url: string; expiresAt: number } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const createPair = async () => {
-    setErr(null);
-    try {
-      const res = await fetch('/api/auth/pair', JSON_POST);
-      if (res.status === 403) throw new Error('Kopplungslinks lassen sich nur nach einer Passkey-Anmeldung (Safari) erstellen.');
-      if (!res.ok) throw new Error(`Server antwortet mit ${res.status}`);
-      setPair(await res.json());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const copy = async () => {
-    if (!pair) return;
-    try {
-      await navigator.clipboard.writeText(pair.url);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <Card title="Zugang">
-      <div class="small muted" style={{ marginBottom: 10 }}>
-        Ein Kopplungslink meldet einen weiteren Browser (z. B. Bluefy) für 30 Tage an. Er ist 10 Minuten gültig und nur einmal verwendbar.
-      </div>
-      {err && <div class="note err" style={{ marginBottom: 10 }}>{err}</div>}
-      {pair ? (
-        <div class="stack">
-          <input readOnly value={pair.url} onFocus={(e) => (e.target as HTMLInputElement).select()} />
-          <button class="btn blue" onClick={copy}>{copied ? 'Kopiert ✓' : 'Link kopieren'}</button>
-          <div class="small muted">Gültig bis {new Date(pair.expiresAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</div>
-        </div>
-      ) : (
-        <button class="btn" onClick={createPair}>Kopplungslink erstellen</button>
-      )}
-      <div class="btns" style={{ marginTop: 10 }}>
-        <button
-          class="btn danger"
-          onClick={async () => {
-            await fetch('/api/auth/logout', JSON_POST).catch(() => {});
-            location.href = '/login';
-          }}
-        >
-          Abmelden
-        </button>
-      </div>
-    </Card>
   );
 }
 

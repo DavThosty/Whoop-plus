@@ -1,4 +1,4 @@
-// WHOOP 4.0 über Web Bluetooth (Bluefy auf dem iPhone).
+// WHOOP 4.0 über die Web-Bluetooth-API (nativ über src/ble/capacitor-bluetooth.ts, im Browser über navigator.bluetooth).
 // Ohne DOM-/UI-Abhängigkeiten, damit es unter vitest gegen den Simulator (src/sim) läuft.
 
 import type { ConnectionState, DeviceInfo, LiveHr, SampleRecord, SyncProgress } from '../types';
@@ -247,7 +247,7 @@ export class WhoopDevice {
     if (this._state === 'connected' || this._state === 'syncing') return;
     if (this._state === 'connecting') throw new Error('Verbindung wird bereits aufgebaut');
     const bt = this.bt;
-    if (!bt) throw new Error('Web Bluetooth wird von diesem Browser nicht unterstützt (Bluefy verwenden)');
+    if (!bt) throw new Error('Kein Bluetooth verfügbar (im Browser wird Web Bluetooth benötigt)');
     this.setState('connecting');
     const gen = this.gen;
     let device: BluetoothDevice;

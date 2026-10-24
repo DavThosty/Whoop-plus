@@ -1,6 +1,10 @@
 node_modules/
 dist/
-data/
 *.log
 .DS_Store
 .env
+# lokale iOS-Build-Ausgaben (wie im CI)
+/build/
+/spm/
+/ipa/
+*.ipa
