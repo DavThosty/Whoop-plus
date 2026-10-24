@@ -1,0 +1,49 @@
+{
+  "name": "Whoop Plus",
+  "identifier": "de.steinerkn.whoopplus.source",
+  "subtitle": "WHOOP 4.0 ohne Abo – Updates direkt in SideStore",
+  "description": "Quelle für Whoop Plus von DavThosty. Jede neue Version aus GitHub erscheint hier automatisch; SideStore zeigt sie unter „Updates“ an.",
+  "iconURL": "https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/icon.png",
+  "website": "https://github.com/DavThosty/Whoop-plus",
+  "tintColor": "#16ec06",
+  "nsfw": false,
+  "featuredApps": [
+    "de.steinerkn.whoopplus"
+  ],
+  "apps": [
+    {
+      "name": "Whoop Plus",
+      "bundleIdentifier": "de.steinerkn.whoopplus",
+      "developerName": "DavThosty",
+      "subtitle": "Schlaf, Recovery & Strain für WHOOP 4.0 – lokal auf dem iPhone",
+      "localizedDescription": "Eigene iPhone-App für das WHOOP 4.0 – ohne Abo, ohne WHOOP-Cloud, ohne Server.\n\nWhoop Plus verbindet sich per Bluetooth direkt mit dem Band, lädt den Verlauf herunter und berechnet Schlaf, HRV, Ruhepuls, Recovery, Strain und Kalorien lokal auf dem iPhone. Alle Daten bleiben auf dem Gerät.\n\nKein offizielles WHOOP-Produkt. Keine Medizin-App – alle Werte sind Schätzungen.",
+      "iconURL": "https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/icon.png",
+      "tintColor": "#16ec06",
+      "category": "lifestyle",
+      "version": "0.1.10",
+      "versionDate": "2026-10-24T20:27:26Z",
+      "versionDescription": "Updates direkt in SideStore, automatische Versionen und „Was ist neu“\n\nNeue Versionen erscheinen jetzt direkt in SideStore mit einem Update-Knopf. Jede Version hat eine eigene Nummer und zeigt beim ersten Öffnen kurz, was neu ist. Die Anleitung ist neu geschrieben: einfach, ohne Fachbegriffe (docs/ANLEITUNG.md).",
+      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.10.ipa",
+      "size": 1068755,
+      "versions": [
+        {
+          "version": "0.1.10",
+          "buildVersion": "10",
+          "date": "2026-10-24T20:27:26Z",
+          "localizedDescription": "Updates direkt in SideStore, automatische Versionen und „Was ist neu“\n\nNeue Versionen erscheinen jetzt direkt in SideStore mit einem Update-Knopf. Jede Version hat eine eigene Nummer und zeigt beim ersten Öffnen kurz, was neu ist. Die Anleitung ist neu geschrieben: einfach, ohne Fachbegriffe (docs/ANLEITUNG.md).",
+          "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.10.ipa",
+          "size": 1068755,
+          "sha256": "7bc24a9b0cc4e5243b27d9513758ec6ff1a5552f494371a14311ec9242c50ede",
+          "minOSVersion": "15.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSBluetoothAlwaysUsageDescription": "Whoop Plus verbindet sich per Bluetooth mit deinem WHOOP-Band, um Puls, Schlaf und Verlauf direkt vom Band zu laden. Die Daten bleiben auf diesem iPhone."
+        }
+      }
+    }
+  ],
+  "news": []
+}
