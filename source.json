@@ -20,12 +20,22 @@
       "iconURL": "https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/icon.png",
       "tintColor": "#16ec06",
       "category": "lifestyle",
-      "version": "0.1.10",
-      "versionDate": "2026-10-24T20:27:26Z",
-      "versionDescription": "Updates direkt in SideStore, automatische Versionen und „Was ist neu“\n\nNeue Versionen erscheinen jetzt direkt in SideStore mit einem Update-Knopf. Jede Version hat eine eigene Nummer und zeigt beim ersten Öffnen kurz, was neu ist. Die Anleitung ist neu geschrieben: einfach, ohne Fachbegriffe (docs/ANLEITUNG.md).",
-      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.10.ipa",
-      "size": 1068755,
+      "version": "0.1.13",
+      "versionDate": "2026-10-24T20:48:57Z",
+      "versionDescription": "Automatische Sicherung und Erinnerung vor dem Ablauf\n\nDie App sichert deine Daten jetzt jeden Tag selbst (Dateien-App → Auf meinem iPhone → Whoop Plus → Sicherungen) und erinnert dich rechtzeitig per Mitteilung, bevor die App in SideStore verlängert werden muss. Unter „Mehr“ siehst du, bis wann die App gültig ist.",
+      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.13.ipa",
+      "size": 1137868,
       "versions": [
+        {
+          "version": "0.1.13",
+          "buildVersion": "13",
+          "date": "2026-10-24T20:48:57Z",
+          "localizedDescription": "Automatische Sicherung und Erinnerung vor dem Ablauf\n\nDie App sichert deine Daten jetzt jeden Tag selbst (Dateien-App → Auf meinem iPhone → Whoop Plus → Sicherungen) und erinnert dich rechtzeitig per Mitteilung, bevor die App in SideStore verlängert werden muss. Unter „Mehr“ siehst du, bis wann die App gültig ist.",
+          "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.13.ipa",
+          "size": 1137868,
+          "sha256": "90c331503df108784080114c976610d8ddcbb726154553ae0c08617a3c928e9b",
+          "minOSVersion": "15.0"
+        },
         {
           "version": "0.1.10",
           "buildVersion": "10",
