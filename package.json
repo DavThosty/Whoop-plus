@@ -1,0 +1,24 @@
+{
+  "name": "whoop-plus",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Whoop 4.0 ohne Abo – Web-App für Bluefy (Web Bluetooth)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "idb": "^8.0.3",
+    "preact": "^10.29.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.0",
+    "typescript": "~5.9.0",
+    "vite": "^8.0.0",
+    "vitest": "^4.0.0"
+  }
+}
