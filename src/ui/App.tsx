@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import { NotifPermissionSheet } from './native-ui';
 import { Icon, Sheet, WhatsNewSheet } from './components';
 import { app } from './controller';
 import { DetailView } from './details';
@@ -149,6 +150,7 @@ export function App() {
       {f.story && <Story date={f.story.date} />}
       {f.ceremony && <Ceremony />}
       {f.connectPrompt && <ConnectPrompt goTo={goTo} />}
+      <NotifPermissionSheet />
       {f.whatsNew && !f.ceremony && <WhatsNewSheet version={f.whatsNew.version} text={f.whatsNew.text} onClose={() => void flow.closeWhatsNew()} />}
       {w.recovery && w.phase === 'idle' && !f.ceremony && <RecoveryPrompt />}
     </>

@@ -437,3 +437,52 @@ auch gelegentlich ohne erkennbaren Grund)
 **Daten sichern / umziehen**
 - *Mehr → Daten → Sicherung → Exportieren* öffnet das iOS-Teilen-Menü (Dateien, AirDrop, Mail …).
   *Einspielen* liest eine solche JSON-Datei wieder ein.
+
+---
+
+## 9. Automatische Sicherung und Ablauf-Erinnerung (technisch)
+
+### Tägliche Sicherung (`src/native/backup.ts`, verdrahtet in `src/native/index.ts`)
+
+- Nur in der nativen App. Inhalt = dieselbe JSON-Sicherung wie „Exportieren“ (`exportBackup()` in
+  `src/store/db.ts`), blockweise (2 MB) per `@capacitor/filesystem` geschrieben nach
+  `Documents/Sicherungen/WhoopPlus-Sicherung-JJJJ-MM-TT.json` (lokales Datum; gleicher Tag = überschreiben).
+- Es bleiben die **7 neuesten** Dateien dieses Namensmusters; andere Dateien im Ordner werden nie angefasst.
+- Auslöser: App-Start, Rückkehr in die App, jede Zustandsänderung von App und Workout (also auch direkt nach
+  einem Sync). Gesichert wird nur, wenn die letzte Sicherung **älter als 20 h** ist und gerade **Ruhe** ist:
+  kein Verbindungsaufbau, kein Sync, keine Auswertung, kein laufendes Workout, keine Demo, Daten vorhanden.
+  Zeitpunkt und Dateiname stehen im IndexedDB-KV (`autoBackup`), damit ein Neustart nicht doppelt sichert.
+- Fehler: nur Protokoll (*Mehr → Protokoll*) und eine leise Zeile unter *Mehr → Daten*; nächster Versuch
+  beim nächsten Auslöser.
+- Sichtbar in der Dateien-App durch `UIFileSharingEnabled` und `LSSupportsOpeningDocumentsInPlace` in
+  `ios/App/App/Info.plist` („Auf meinem iPhone → Whoop Plus“; der Ordner erscheint nach der ersten Sicherung).
+- *Mehr → Daten → „Neueste Sicherung einspielen“* liest die neueste Datei über `Filesystem.readFile` und
+  übergibt sie dem normalen Import.
+- Achtung: Die Dateien liegen im App-Container. Löschen der App löscht sie mit; ein iCloud-Geräte-Backup
+  des iPhones enthält sie dagegen.
+
+### Ablaufdatum und Erinnerung (`src/native/expiry.ts`)
+
+- App-eigenes Capacitor-Plugin **`AppExpiry`** (`ios/App/App/AppExpiryPlugin.swift`): liest
+  `embedded.mobileprovision` aus dem App-Bundle. Die Datei ist CMS-signiert; das XML-Plist steht im Klartext
+  zwischen `<?xml` und `</plist>`, daraus wird `ExpirationDate` gelesen und als ISO-Datum zurückgegeben.
+  Ohne Datei (Simulator, unsignierter CI-Build) ist das Ergebnis leer → JS: `null`, die Anzeige entfällt.
+  `embedded.mobileprovision` gibt es erst, nachdem SideStore die App mit deiner Apple-ID signiert hat.
+- Registrierung (Capacitor 8, ohne npm-Paket): Klasse `AppExpiryPlugin: CAPPlugin, CAPBridgedPlugin`
+  (`jsName = "AppExpiry"`), registriert in `MainViewController` (Unterklasse von `CAPBridgeViewController`)
+  über `capacitorDidLoad()` → `bridge?.registerPluginInstance(AppExpiryPlugin())`. `SceneDelegate` erzeugt
+  `MainViewController()`, und `Main.storyboard` verweist ebenfalls darauf. JS: `registerPlugin('AppExpiry')`.
+- Bei Start und Rückkehr in die App wird das Datum gelesen. Ändert es sich (also nach „Aktualisieren“ in
+  SideStore), werden die Mitteilungen mit den IDs 7101/7102 gelöscht und neu geplant
+  (`@capacitor/local-notifications`): **24 h** und **3 h** vor Ablauf, nur wenn der Zeitpunkt noch in der
+  Zukunft liegt. Titel „Whoop Plus läuft bald ab“, Text „Öffne SideStore und tippe auf Aktualisieren –
+  dauert 10 Sekunden.“
+- Mitteilungs-Erlaubnis: nicht beim ersten Start, sondern nach dem **ersten erfolgreichen Verbinden** mit dem
+  Band – zuerst ein Erklär-Sheet mit einem Satz, erst bei „Ja“ die iOS-Abfrage. Es wird nur einmal gefragt.
+- Weniger als 48 h bis zum Ablauf: dezenter Hinweis oben auf *Heute* (für den Tag ausblendbar).
+  *Mehr* zeigt „App gültig bis Mi., 30. Okt., 21:14“.
+- Grenze: Die App kennt ein neues Ablaufdatum erst, wenn sie nach dem Verlängern einmal geöffnet wurde.
+  Verlängert der Kurzbefehl im Hintergrund und wird Whoop Plus danach nicht geöffnet, kann noch eine
+  Erinnerung zum *alten* Datum kommen (Fehlalarm, harmlos). Ein Tipp auf die Mitteilung öffnet die App, die
+  das neue Datum liest und die Erinnerungen ersetzt.
+

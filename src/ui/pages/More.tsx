@@ -6,6 +6,7 @@ import { GlassCard, Icon, Stat, WhatsNewSheet } from '../components';
 import { APP_CHANGELOG, APP_VERSION, versionLabel } from '../../version';
 import { isNativeApp } from '../../ble/platform';
 import { app } from '../controller';
+import { AppValidity, AutoBackupInfo } from '../native-ui';
 import { ExplainSheet } from '../explain';
 import { dateTime, relative } from '../format';
 import { useApp, useSelect, useWorkouts } from '../hooks';
@@ -32,6 +33,7 @@ export function More() {
       <ProfileSection />
       <div class="section-label">Daten</div>
       <DataSection />
+      <AppValidity />
       <div class="section-label">Wie wird gerechnet?</div>
       <section class="glass list">
         {TOPICS.map((t) => (
@@ -255,6 +257,7 @@ function DataSection() {
           />
         </label>
       </div>
+      <AutoBackupInfo />
       <label class="field" style={{ marginTop: 16 }}>
         <span>Rohdaten aufbewahren (Tageswerte bleiben immer)</span>
         <select value={String(s.retentionDays)} onChange={(e) => app.setRetention(Number((e.target as HTMLSelectElement).value))}>

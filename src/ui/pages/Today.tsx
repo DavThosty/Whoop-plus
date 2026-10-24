@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'preact/hooks';
+import { ExpiryBanner } from '../native-ui';
 import type { Recommendation } from '../../analytics';
 import { useTween } from '../anim';
 import type { Tab } from '../App';
@@ -54,6 +55,7 @@ export function Today(props: { date: string; setDate: (d: string) => void; goTo:
 
   return (
     <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <ExpiryBanner />
       {!s.profile && (
         <button class="note warn" style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 14, cursor: 'pointer' }} onClick={() => props.goTo('mehr')}>
           Bitte zuerst dein <b style={{ color: 'var(--text)' }}>Profil</b> ausfüllen – ohne Alter, Gewicht und Maximalpuls lassen sich Strain und Kalorien nicht berechnen. ›
