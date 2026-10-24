@@ -2,7 +2,8 @@ import { useEffect, useState } from 'preact/hooks';
 import type { ExplainKey } from '../../analytics';
 import { wipeAll } from '../../store/db';
 import type { Profile } from '../../types';
-import { GlassCard, Icon, Stat } from '../components';
+import { GlassCard, Icon, Stat, WhatsNewSheet } from '../components';
+import { APP_CHANGELOG, APP_VERSION, versionLabel } from '../../version';
 import { isNativeApp } from '../../ble/platform';
 import { app } from '../controller';
 import { ExplainSheet } from '../explain';
@@ -22,6 +23,7 @@ const TOPICS: { key: ExplainKey; label: string; color: string; icon: string }[] 
 
 export function More() {
   const [topic, setTopic] = useState<ExplainKey | null>(null);
+  const [news, setNews] = useState(false);
   return (
     <div>
       <div class="section-label">Band</div>
@@ -42,8 +44,15 @@ export function More() {
       </section>
       <div class="section-label">Protokoll</div>
       <LogSection />
-      <div class="center faint tiny" style={{ marginTop: 24 }}>Whoop Plus · alle Daten bleiben auf diesem Gerät</div>
+      <div class="center faint tiny" style={{ marginTop: 24 }}>
+        <div>Whoop Plus {versionLabel()}</div>
+        <div style={{ marginTop: 4 }}>Alle Daten bleiben auf diesem Gerät</div>
+        {APP_CHANGELOG && (
+          <button class="linkbtn" style={{ marginTop: 10 }} onClick={() => setNews(true)}>Was ist neu?</button>
+        )}
+      </div>
       {topic && <ExplainSheet topic={topic} onClose={() => setTopic(null)} />}
+      {news && <WhatsNewSheet version={APP_VERSION} text={APP_CHANGELOG} onClose={() => setNews(false)} />}
     </div>
   );
 }

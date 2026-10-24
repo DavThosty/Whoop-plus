@@ -11,6 +11,8 @@ const assets = path.join(here, '..', 'ios', 'App', 'App', 'Assets.xcassets');
 const jobs = [
   ['app-icon.svg', 1024, path.join(assets, 'AppIcon.appiconset', 'AppIcon-1024.png')],
   ['splash-logo.svg', 360, path.join(assets, 'Splash.imageset', 'splash-logo.png')],
+  // Icon der SideStore-Quelle (der Workflow kopiert es auf den Branch „sidestore“).
+  ['app-icon.svg', 512, path.join(here, 'icon-512.png')],
 ];
 
 (async () => {
