@@ -8,6 +8,12 @@ export function ExplainSheet(props: { topic: ExplainKey; onClose: () => void; ex
       {props.extra}
       {e.paragraphs.map((p, i) => <p key={i}>{p}</p>)}
       {e.formula && <pre>{e.formula}</pre>}
+      {e.limitations.length > 0 && (
+        <>
+          <div class="eyebrow" style={{ marginTop: 16 }}>Grenzen</div>
+          <ul>{e.limitations.map((l, i) => <li key={i}>{l}</li>)}</ul>
+        </>
+      )}
     </Sheet>
   );
 }

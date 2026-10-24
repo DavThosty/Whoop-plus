@@ -11,7 +11,9 @@ Schritt-für-Schritt-Anleitung: **[docs/IOS.md](docs/IOS.md)**.
 ## Funktionen
 
 - Live-Puls, Verlauf vom Band (ca. 14 Tage Speicher) mit Bestätigung erst nach dem Speichern
-- Automatisches Verbinden und Synchronisieren beim Öffnen der App (ohne Geräteauswahl)
+- Verbindet sich beim Öffnen und bei jeder Rückkehr in die App selbst mit dem gemerkten Band und synchronisiert;
+  ist das Band nicht in Reichweite, nur ein dezenter Hinweis statt Fehlermeldung
+- Live-Puls nach dem Verbinden automatisch an (abschaltbar)
 - Schlaferkennung aus Armwinkel (Beschleunigung) und Puls, HRV (RMSSD), Ruhepuls
 - Recovery (z-Werte gegen die eigene 30-Tage-Baseline), Strain 0–21 (Edwards-TRIMP), Kalorien (Keytel)
 - Trends über 7/30/90 Tage, Vibrationswecker, „Band vibrieren“

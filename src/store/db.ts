@@ -1,25 +1,52 @@
 // Lokaler Speicher im Browser (IndexedDB). Nichts davon verlässt das Gerät.
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import { normalizeWorkout, type WorkoutRecord } from '../analytics/workout';
 import type { DailySummary, Profile, SampleRecord } from '../types';
 
 interface WhoopDb extends DBSchema {
   samples: { key: number; value: SampleRecord };
   days: { key: string; value: DailySummary };
   kv: { key: string; value: unknown };
+  workouts: { key: number; value: WorkoutRecord };
 }
 
 const DB_NAME = 'whoop-plus';
-const DB_VERSION = 1;
+/** v1: samples, days, kv · v2: + workouts. */
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<WhoopDb>> | null = null;
+
+export type DbNotice = 'blocked' | 'blocking' | 'terminated';
+let noticeHandler: (n: DbNotice) => void = () => {};
+/** Hinweise zur Datenbank (z. B. ein anderer Tab blockiert ein Update) an die Oberfläche melden. */
+export function onDbNotice(fn: (n: DbNotice) => void): void {
+  noticeHandler = fn;
+}
 
 export function db(): Promise<IDBPDatabase<WhoopDb>> {
   if (!dbPromise) {
     dbPromise = openDB<WhoopDb>(DB_NAME, DB_VERSION, {
-      upgrade(d) {
-        d.createObjectStore('samples', { keyPath: 'ts' });
-        d.createObjectStore('days', { keyPath: 'date' });
-        d.createObjectStore('kv');
+      // Ein anderer Tab mit älterer Version hält die Datenbank offen → Update wartet.
+      blocked() {
+        noticeHandler('blocked');
+      },
+      // Ein anderer Tab will aktualisieren → hier schließen, damit er nicht hängen bleibt.
+      blocking() {
+        void dbPromise?.then((d) => d.close());
+        dbPromise = null;
+        noticeHandler('blocking');
+      },
+      terminated() {
+        dbPromise = null;
+        noticeHandler('terminated');
+      },
+      upgrade(d, oldVersion) {
+        if (oldVersion < 1) {
+          d.createObjectStore('samples', { keyPath: 'ts' });
+          d.createObjectStore('days', { keyPath: 'date' });
+          d.createObjectStore('kv');
+        }
+        if (oldVersion < 2) d.createObjectStore('workouts', { keyPath: 'id' });
       },
     });
   }
@@ -106,13 +133,36 @@ export async function setKv<T>(key: string, value: T): Promise<void> {
   await d.put('kv', value, key);
 }
 
+// --- Workouts ---
+
+export async function putWorkout(w: WorkoutRecord): Promise<void> {
+  const d = await db();
+  await d.put('workouts', w);
+}
+
+/** Alle Workouts, neueste zuerst. */
+export async function getWorkouts(): Promise<WorkoutRecord[]> {
+  const d = await db();
+  return (await d.getAll('workouts')).reverse();
+}
+
+export async function deleteWorkout(id: number): Promise<void> {
+  const d = await db();
+  await d.delete('workouts', id);
+}
+
+export async function countWorkouts(): Promise<number> {
+  const d = await db();
+  return d.count('workouts');
+}
+
 export const getProfile = () => getKv<Profile>('profile');
 export const setProfile = (p: Profile) => setKv('profile', p);
 
 /** Löscht alle lokalen Daten (Rohdaten, Tageswerte, Einstellungen). */
 export async function wipeAll(): Promise<void> {
   const d = await db();
-  await Promise.all([d.clear('samples'), d.clear('days'), d.clear('kv')]);
+  await Promise.all([d.clear('samples'), d.clear('days'), d.clear('kv'), d.clear('workouts')]);
 }
 
 /** Bittet den Browser, die Daten nicht automatisch zu löschen. Ergebnis: ob dauerhaft gespeichert wird. */
@@ -146,6 +196,8 @@ export interface BackupFile {
   exportedAt: number;
   kv: Record<string, unknown>;
   days: DailySummary[];
+  /** Ab Datenbankversion 2 (optional, ältere Sicherungen haben keine Workouts). */
+  workouts?: WorkoutRecord[];
   samples: PackedSample[];
 }
 
@@ -159,8 +211,9 @@ export async function exportBackup(): Promise<Blob> {
     cursor = await cursor.continue();
   }
   const days = await d.getAll('days');
+  const workouts = await d.getAll('workouts');
   const parts: string[] = [
-    `{"app":"whoop-plus","version":1,"exportedAt":${Date.now()},"kv":${JSON.stringify(kv)},"days":${JSON.stringify(days)},"samples":[`,
+    `{"app":"whoop-plus","version":1,"exportedAt":${Date.now()},"kv":${JSON.stringify(kv)},"days":${JSON.stringify(days)},"workouts":${JSON.stringify(workouts)},"samples":[`,
   ];
   let from = -Infinity;
   let first = true;
@@ -188,6 +241,11 @@ export async function importBackup(text: string): Promise<number> {
   for (const [k, v] of Object.entries(data.kv ?? {})) await d.put('kv', v, k);
   const daysTx = d.transaction('days', 'readwrite');
   await Promise.all([...(data.days ?? []).map((day) => daysTx.store.put(day)), daysTx.done]);
+  if (Array.isArray(data.workouts) && data.workouts.length) {
+    const wTx = d.transaction('workouts', 'readwrite');
+    const valid = data.workouts.map(normalizeWorkout).filter((w): w is WorkoutRecord => w !== null);
+    await Promise.all([...valid.map((w) => wTx.store.put(w)), wTx.done]);
+  }
   const samples = data.samples ?? [];
   for (let i = 0; i < samples.length; i += 20000) {
     const batch = samples.slice(i, i + 20000).map(([ts, hr, rr, gx, gy, gz, src]): SampleRecord => ({

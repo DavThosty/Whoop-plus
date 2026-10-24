@@ -209,6 +209,36 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     expect(await dev.syncHistory()).toBe(0);
   });
 
+  it('Verlauf bei eingeschaltetem Echtzeit-Puls: jeder Datensatz genau einmal, alle Acks korrekt', async () => {
+    const stored: SampleRecord[] = [];
+    const sink: RecordSink = async (records) => {
+      await sleep(15); // Commit dauert, während Echtzeitpakete weiterlaufen
+      stored.push(...records);
+    };
+    const { dev, strap, ev } = setup({ historySeconds: 1800, realtimeIntervalMs: 5 }, sink);
+    await dev.connect();
+    await dev.setRealtimeHr(true);
+    await until(() => ev.live.length >= 3);
+    const liveBefore = ev.live.length;
+    const n = await dev.syncHistory();
+    expect(n).toBe(1800);
+    expect(stored).toHaveLength(1800);
+    const ts = stored.map((r) => r.ts);
+    expect(new Set(ts).size).toBe(1800);
+    expect(Math.min(...ts)).toBe(START);
+    expect(Math.max(...ts)).toBe(START + 1799);
+    expect(stored.every((r) => r.src === 'history')).toBe(true);
+    // Echtzeitpakete kamen während des Syncs weiter an und landeten nicht im Verlauf.
+    expect(ev.live.length).toBeGreaterThan(liveBefore + 5);
+    expect(strap.realtimePacketsSent).toBeGreaterThan(10);
+    expect(strap.acks.map((a) => a.accepted)).toEqual([true, true, true]);
+    expect(strap.batchesSent).toBe(3);
+    expect(strap.cursor).toBe(1800);
+    expect(ev.errors).toEqual([]);
+    assertSafe(strap);
+    expect(await dev.syncHistory()).toBe(0);
+  });
+
   it('Sink-Fehler → kein Ack, Abbruch mit ABORT, nächster Sync setzt beim unbestätigten Block fort', async () => {
     let calls = 0;
     const stored: SampleRecord[] = [];
@@ -404,6 +434,38 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     await dev.buzz();
     expect(strap.hapticsRuns).toBe(1);
     assertSafe(strap);
+  });
+
+  it('Kurzer Haptik-Impuls sendet nur RUN_HAPTICS_PATTERN (kein RUN_ALARM)', async () => {
+    const { dev, strap } = setup();
+    await dev.connect();
+    const before = strap.received.length;
+    await dev.haptic();
+    await dev.haptic(3, 2);
+    expect(strap.hapticsRuns).toBe(2);
+    expect(strap.hapticsPatterns).toEqual([[2, 1], [3, 2]]);
+    // Herzschlag-Kommandos laufen parallel – nur Haptik/Alarm betrachten.
+    const ops = strap.received
+      .slice(before)
+      .map((c) => c.opcode)
+      .filter((op) => op === Opcode.RUN_HAPTICS_PATTERN || op === Opcode.RUN_ALARM);
+    expect(ops).toEqual([Opcode.RUN_HAPTICS_PATTERN, Opcode.RUN_HAPTICS_PATTERN]);
+    expect(ops).not.toContain(Opcode.RUN_ALARM);
+    await dev.disconnect();
+    await expect(dev.haptic()).rejects.toThrow(/Nicht verbunden/);
+    assertSafe(strap);
+  });
+
+  it('Simulierter Echtzeitpuls folgt einem Zielpuls', async () => {
+    const { dev, strap, ev } = setup({ liveHrTarget: 150 });
+    await dev.connect();
+    await dev.setRealtimeHr(true);
+    await until(() => ev.live.length >= 15, 3000);
+    expect(ev.live.at(-1)!.hr).toBeGreaterThan(140);
+    strap.liveHrTarget = 100;
+    const n = ev.live.length;
+    await until(() => ev.live.length >= n + 15, 3000);
+    expect(ev.live.at(-1)!.hr).toBeLessThan(110);
   });
 
   it('Kopplungsdialog: langer erster Write wird abgewartet', async () => {

@@ -167,9 +167,9 @@ Wichtig: **Vor dem ersten eigenen App-Install SideStore einmal so verlängern** 
    installieren. Sie ersetzt die alte Version, **alle Daten bleiben erhalten**, und die 7 Tage beginnen neu.
 
 > **Achtung: Whoop Plus niemals löschen**, solange du die Daten behalten willst. Beim Löschen der App
-> löscht iOS alle gespeicherten Messwerte. Vorher in der App unter *Band → Gespeicherte Daten →
-> Sicherung exportieren* eine Sicherung anlegen (z. B. in „Dateien“ oder iCloud Drive sichern) und nach der
-> Neuinstallation mit „Sicherung einspielen“ zurückholen.
+> löscht iOS alle gespeicherten Messwerte. Vorher in der App unter *Mehr → Daten → Sicherung → Exportieren*
+> eine Sicherung anlegen (z. B. in „Dateien“ oder iCloud Drive sichern) und nach der Neuinstallation mit
+> „Einspielen“ zurückholen.
 
 ---
 
@@ -179,7 +179,7 @@ Wichtig: **Vor dem ersten eigenen App-Install SideStore einmal so verlängern** 
 2. *Einstellungen → Bluetooth* → bei „WHOOP …“ auf **ⓘ** → **„Dieses Gerät ignorieren“**. So startet die
    Kopplung mit Whoop Plus sauber neu.
 3. Band laden und anlegen.
-4. **Whoop Plus** öffnen und im Tab **Band** auf **„Band verbinden“** tippen.
+4. **Whoop Plus** öffnen und auf **„Band verbinden“** tippen (auf *Heute* oder unter *Mehr → Band*).
 5. Beim ersten Tippen fragt iOS nach **Bluetooth** → **Erlauben**.
    (Abgelehnt? *Einstellungen → Whoop Plus → Bluetooth* einschalten.)
    Danach erscheint eine Liste „Suche WHOOP-Band …“ – dein Band (z. B. „WHOOP 4C…“) antippen.
@@ -187,16 +187,24 @@ Wichtig: **Vor dem ersten eigenen App-Install SideStore einmal so verlängern** 
    Befehle. Du hast dafür ca. 30 Sekunden.
 7. Danach stellt die App die Uhr des Bands und lädt den Verlauf. Der erste Sync kann bei vollem Bandspeicher
    (bis ca. 14 Tage) einige Minuten dauern – App dabei geöffnet lassen.
-8. Im Tab **Profil** Alter, Gewicht usw. eintragen.
+8. Unter *Mehr → Profil* Alter, Gewicht usw. eintragen.
 
 Die App merkt sich das gewählte Band, damit später keine Auswahlliste mehr nötig ist.
 
 ## 7. So funktioniert der Sync im Alltag
 
-- Die App versucht, sich beim Öffnen mit dem gemerkten Band zu verbinden und neue Daten zu laden. Klappt
-  das nicht (z. B. Band außer Reichweite), im Tab *Band* auf „Band verbinden“ tippen. Einzelheiten zur
-  Verbindung stehen im Tab *Band → Protokoll*.
+- **Beim Öffnen der App und bei jeder Rückkehr in die App** verbindet sie sich ohne Auswahlliste mit dem
+  gemerkten Band. Nach dem Verbinden lädt sie automatisch den Verlauf; ist sie schon verbunden, lädt sie neu,
+  wenn der letzte Sync älter als 5 Minuten ist.
+- Ist das Band nicht erreichbar, erscheint **keine Fehlermeldung** – oben steht nur dezent
+  „Nicht in Reichweite“, Einzelheiten unter *Mehr → Protokoll*. Nach einem Verbindungsabbruch versucht die
+  App es noch ein paar Mal von selbst (nach 5 s, 15 s und 60 s); danach erst wieder beim nächsten Öffnen.
+  Ein Tipp auf „Band verbinden“ zeigt dagegen echte Fehler an.
+- Hast du selbst auf **„Trennen“** getippt, verbindet sich die App bis zum nächsten Start nicht von selbst.
 - Solange die App offen und verbunden ist, synchronisiert sie zusätzlich alle 15 Minuten.
+- **Live-Puls** ist nach jedem Verbinden automatisch an (für den Puls in der Navigationsleiste). Das kostet
+  etwas mehr Akku am Band und am iPhone; unter *Mehr → Band* lässt er sich mit „Live aus“ für die aktuelle
+  Verbindung abschalten.
 - Beim Wechsel in den Hintergrund trennt die App die Verbindung **nicht** (Hintergrundmodus
   „bluetooth-central“). Kurz zu einer anderen App wechseln und zurück geht also ohne neuen Verbindungsaufbau.
 - **Realistische Grenzen:** iOS pausiert die App (und ihre Oberfläche) im Hintergrund nach kurzer Zeit und
@@ -220,7 +228,8 @@ Die App merkt sich das gewählte Band, damit später keine Auswahlliste mehr nö
   ignorieren und neu verbinden.
 
 **Die App verbindet sich nicht mit dem Band**
-- Band außer Reichweite oder mit einer anderen App verbunden. Im Tab *Band* auf „Band verbinden“ tippen.
+- Band außer Reichweite oder mit einer anderen App verbunden (oben steht „Nicht in Reichweite“). Band in die
+  Nähe bringen, die WHOOP-App schließen und unter *Mehr → Band* auf „Band verbinden“ tippen.
 - Nach einem Band-Tausch: einmal „Band verbinden“ und das neue Band wählen – die App merkt sich dann das neue.
 
 **„Bluetooth ist ausgeschaltet“ / „Bluetooth-Zugriff nicht erlaubt“**
@@ -256,5 +265,5 @@ auch gelegentlich ohne erkennbaren Grund)
   ein Swift-Paket konnte nicht geladen werden (dann einfach *Re-run jobs*).
 
 **Daten sichern / umziehen**
-- *Band → Gespeicherte Daten → Sicherung exportieren* öffnet das iOS-Teilen-Menü (Dateien, AirDrop, Mail …).
-  *Sicherung einspielen* liest eine solche JSON-Datei wieder ein.
+- *Mehr → Daten → Sicherung → Exportieren* öffnet das iOS-Teilen-Menü (Dateien, AirDrop, Mail …).
+  *Einspielen* liest eine solche JSON-Datei wieder ein.
