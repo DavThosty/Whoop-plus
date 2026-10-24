@@ -112,6 +112,23 @@ du hast, steht in Whoop Plus ganz unten unter **Mehr**.
 
 ---
 
+## Sicherungen und Erinnerungen – macht die App von selbst
+
+- **Die App sichert sich jeden Tag selbst.** Die Sicherungen findest du in der **Dateien**-App unter
+  **Auf meinem iPhone** → **Whoop Plus** → **Sicherungen** (immer die letzten 7 Tage). Wann zuletzt gesichert
+  wurde, steht in Whoop Plus unter **Mehr** → **Daten**. Dort kannst du die neueste Sicherung auch mit einem
+  Tipp wieder einspielen.
+- **Die App erinnert dich rechtzeitig, falls du verlängern musst.** Nach dem ersten Verbinden mit dem Band
+  fragt sie, ob sie dir Mitteilungen schicken darf – bitte **Ja, erinnern** und dann **Erlauben** tippen.
+  (Verpasst? Unter **Mehr** → **Erinnerungen aktivieren**.) Einen Tag und drei Stunden vor Ablauf kommt dann:
+  „Whoop Plus läuft bald ab – Öffne SideStore und tippe auf Aktualisieren (falls noch nicht geschehen)“. Bis wann die App gerade gültig ist, steht unter **Mehr**. Hast du schon verlängert (z. B.
+  automatisch über den Kurzbefehl), kannst du die Erinnerung einfach antippen – die App merkt es sich dann.
+
+> Die Sicherungen liegen in der App. Wird Whoop Plus gelöscht, sind sie mit weg – für einen Umzug die neueste
+> Datei vorher z. B. nach iCloud Drive kopieren (in der Dateien-App lange drücken → **Kopieren**).
+
+---
+
 ## 6. Wenn etwas nicht geht
 
 **Whoop Plus oder SideStore startet nicht mehr.**
@@ -133,7 +150,8 @@ In SideStore unter **My Apps** nach unten ziehen. Eine neue Version braucht nach
 bis sie angezeigt wird.
 
 **Ich bekomme ein neues iPhone.**
-Vorher in Whoop Plus: **Mehr** → **Daten** → **Exportieren** und die Datei z. B. in iCloud Drive sichern. Auf dem
+Vorher in Whoop Plus: **Mehr** → **Daten** → **Exportieren** und die Datei z. B. in iCloud Drive sichern
+(oder die neueste Datei aus **Dateien** → **Auf meinem iPhone** → **Whoop Plus** → **Sicherungen** dorthin kopieren). Auf dem
 neuen iPhone alles ab Abschnitt 2 einrichten und die Datei mit **Einspielen** zurückholen.
 
 > **Wichtig:** Whoop Plus **nie löschen** – dabei gehen alle gespeicherten Werte verloren. Abgelaufen ist nicht

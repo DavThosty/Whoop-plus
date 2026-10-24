@@ -26,6 +26,8 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Whoop Plus verbindet sich per Bluetooth mit deinem WHOOP-Band, um Puls, Schlaf und Verlauf direkt vom Band zu laden. Die Daten bleiben auf diesem iPhone.</string>
 	<key>UIApplicationSceneManifest</key>
@@ -47,6 +49,8 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
