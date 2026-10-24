@@ -7,6 +7,8 @@ services:
       context: .
       dockerfile: Dockerfile
     image: whoop-plus:latest
+    # Always build from the checked-out repo on (re)deploy; never try to pull this image.
+    pull_policy: build
     container_name: whoop-plus
     restart: unless-stopped
     environment:
