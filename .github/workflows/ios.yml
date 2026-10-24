@@ -1,5 +1,9 @@
-# Baut die native iOS-App (unsigniert) und veröffentlicht sie als Release "ios-latest".
+# Baut die native iOS-App (unsigniert) und veröffentlicht sie als Release "ios-latest" und über die
+# SideStore-Quelle https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json.
 # Die IPA wird auf dem iPhone von SideStore mit der eigenen (kostenlosen) Apple-ID signiert – siehe docs/IOS.md.
+#
+# Versionen: <major>.<minor> aus package.json + Lauf-Nummer, z. B. 0.1.12 (Build 12).
+# „Was ist neu“: aus der Commit-Nachricht des Merges (scripts/make-source.mjs changelog).
 name: iOS-Build
 
 on:
@@ -54,8 +58,36 @@ jobs:
       - name: Tests
         run: npm test
 
-      - name: Web-Oberfläche bauen
-        run: npm run build
+      - name: Version und „Was ist neu“
+        id: ver
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          eval "$(node scripts/make-source.mjs version "$RUN_NUMBER")"
+          {
+            echo "marketing=$marketing"
+            echo "build=$build"
+            echo "artifact=WhoopPlus-$marketing"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/commit-message.txt"
+          else
+            git log -1 --format=%B "$GITHUB_SHA" > "$RUNNER_TEMP/commit-message.txt"
+          fi
+          node scripts/make-source.mjs changelog < "$RUNNER_TEMP/commit-message.txt" > "$RUNNER_TEMP/changelog.txt"
+          echo "Version $marketing ($build)"
+          echo "--- Was ist neu ---"
+          cat "$RUNNER_TEMP/changelog.txt"; echo
+          xcodebuild -version
+
+      - name: Web-Oberfläche bauen (mit Version und „Was ist neu“)
+        env:
+          VITE_APP_VERSION: ${{ steps.ver.outputs.marketing }}
+          VITE_APP_BUILD: ${{ steps.ver.outputs.build }}
+        run: VITE_CHANGELOG="$(cat "$RUNNER_TEMP/changelog.txt")" npm run build
 
       - name: Capacitor-Sync (Web-Dateien + Swift-Pakete)
         run: npx cap sync ios
@@ -66,14 +98,6 @@ jobs:
           path: spm
           key: spm-${{ runner.os }}-${{ hashFiles('ios/App/CapApp-SPM/Package.swift', 'package-lock.json') }}
           restore-keys: spm-${{ runner.os }}-
-
-      - name: Versionsnummern
-        id: ver
-        run: |
-          echo "marketing=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "artifact=WhoopPlus-$(node -p "require('./package.json').version")-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          xcodebuild -version
 
       - name: Xcode-Build (unsigniert, Gerät)
         run: |
@@ -93,12 +117,20 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: IPA packen
+      - name: IPA packen und Metadaten prüfen
+        env:
+          MARKETING: ${{ steps.ver.outputs.marketing }}
+          BUILD: ${{ steps.ver.outputs.build }}
         run: |
           APP=build/Build/Products/Release-iphoneos/App.app
           test -f "$APP/public/index.html" || { echo "::error::Web-Dateien fehlen in App.app"; exit 1; }
-          echo "CFBundleVersion: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
-          echo "CFBundleShortVersionString: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+          grep -rqF "$MARKETING" "$APP/public/assets" || { echo "::error::Version $MARKETING fehlt in der Web-Oberfläche"; exit 1; }
+          plutil -convert json -o "$RUNNER_TEMP/info.json" "$APP/Info.plist"
+          # Prüft CFBundleShortVersionString, CFBundleVersion und Bundle-ID (SideStore vergleicht sie mit der Quelle)
+          # und sammelt minOSVersion und die Datenschutz-Texte für source.json.
+          node scripts/make-source.mjs meta --info "$RUNNER_TEMP/info.json" --changelog "$RUNNER_TEMP/changelog.txt" \
+            --version "$MARKETING" --build "$BUILD" --out release-meta.json
+          cat release-meta.json
           rm -rf ipa && mkdir -p ipa/Payload
           cp -R "$APP" ipa/Payload/
           (cd ipa && zip -qry "../$IPA_NAME" Payload)
@@ -108,12 +140,14 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.ver.outputs.artifact }}
-          path: ${{ env.IPA_NAME }}
+          path: |
+            ${{ env.IPA_NAME }}
+            release-meta.json
           if-no-files-found: error
           retention-days: 30
 
   release:
-    name: Release "ios-latest" aktualisieren
+    name: Release "ios-latest" und SideStore-Quelle aktualisieren
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -122,31 +156,84 @@ jobs:
       contents: write
     env:
       RELEASE_TAG: ios-latest
+      SOURCE_BRANCH: sidestore
+      SOURCE_URL: https://raw.githubusercontent.com/${{ github.repository }}/sidestore/source.json
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
       MARKETING: ${{ needs.build.outputs.marketing }}
       BUILD: ${{ needs.build.outputs.build }}
     steps:
-      - name: Code holen (für das Tag)
+      - name: Code holen (für Tag, Skript und Icon)
         uses: actions/checkout@v6
+
+      - name: Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
 
       - name: IPA aus dem Build-Job holen
         uses: actions/download-artifact@v7
         with:
           name: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/out
 
       - name: Tag verschieben und Release aktualisieren (ohne Lücke)
+        working-directory: ${{ runner.temp }}/out
         run: |
-          test -f "$IPA_NAME"
+          test -f "$IPA_NAME" && test -f release-meta.json
+          # Eindeutige Datei je Version für SideStore; WhoopPlus.ipa bleibt als „neueste“ für die manuelle Installation.
+          VERSIONED="WhoopPlus-$MARKETING.ipa"
+          cp "$IPA_NAME" "$VERSIONED"
           TITLE="Whoop Plus iOS $MARKETING ($BUILD)"
-          NOTES="Automatischer Build $MARKETING ($BUILD) von ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC').
-
-          Unsigniert – Installation und Aktualisierung über SideStore, siehe docs/IOS.md."
+          {
+            echo "Automatischer Build $MARKETING ($BUILD) von ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo
+            echo "### Was ist neu"
+            echo
+            node -p "require('./release-meta.json').changelog"
+            echo
+            echo "Unsigniert – Installation und Updates über SideStore. Quelle (einmalig in SideStore hinzufügen):"
+            echo "$SOURCE_URL"
+            echo
+            echo "Anleitung: docs/IOS.md"
+          } > notes.md
           # Tag auf den gebauten Commit setzen (ein bestehendes Release folgt dem Tag).
-          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
-          git push -f origin "refs/tags/$RELEASE_TAG"
+          git -C "$GITHUB_WORKSPACE" tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" push -f origin "refs/tags/$RELEASE_TAG"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$IPA_NAME" --clobber
-            gh release edit "$RELEASE_TAG" --prerelease --title "$TITLE" --notes "$NOTES"
+            gh release upload "$RELEASE_TAG" "$VERSIONED" "$IPA_NAME" --clobber
+            gh release edit "$RELEASE_TAG" --prerelease --title "$TITLE" --notes-file notes.md
           else
-            gh release create "$RELEASE_TAG" "$IPA_NAME" --verify-tag --prerelease --title "$TITLE" --notes "$NOTES"
+            gh release create "$RELEASE_TAG" "$VERSIONED" "$IPA_NAME" --verify-tag --prerelease --title "$TITLE" --notes-file notes.md
           fi
+
+      # Erst nach dem Hochladen der IPA, damit die Quelle nie auf eine fehlende Datei zeigt.
+      - name: SideStore-Quelle aktualisieren (Branch "sidestore")
+        run: |
+          OUT="$RUNNER_TEMP/out"
+          cp scripts/make-source.mjs resources/icon-512.png "$RUNNER_TEMP/"
+          # Branch mit source.json holen (beim ersten Mal ohne Vorgeschichte neu anlegen).
+          if git fetch --depth=1 origin "refs/heads/$SOURCE_BRANCH"; then
+            git checkout -q -B "$SOURCE_BRANCH" FETCH_HEAD
+          else
+            git checkout -q --orphan "$SOURCE_BRANCH"
+            git rm -rq --cached .
+            git clean -fdxq
+          fi
+          node "$RUNNER_TEMP/make-source.mjs" source --meta "$OUT/release-meta.json" --ipa "$OUT/WhoopPlus-$MARKETING.ipa" \
+            --previous source.json --out source.json --removed "$OUT/removed.txt"
+          cp "$RUNNER_TEMP/icon-512.png" icon.png
+          git add source.json icon.png
+          git -c user.name="github-actions[bot]" -c user.email="41898273+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "SideStore-Quelle: Whoop Plus $MARKETING ($BUILD)" -m "Aus ${GITHUB_SHA::7}, Lauf ${GITHUB_RUN_ID}."
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          echo "Quelle: $SOURCE_URL"
+
+      - name: Alte Versionen aus dem Release entfernen
+        working-directory: ${{ runner.temp }}/out
+        run: |
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            echo "Entferne $name"
+            gh release delete-asset "$RELEASE_TAG" "$name" --yes || echo "::warning::$name ließ sich nicht entfernen"
+          done < removed.txt

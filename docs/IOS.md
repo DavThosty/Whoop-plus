@@ -6,9 +6,17 @@ einem **Windows-PC** (nur einmal für die Einrichtung) und **ohne Mac**.
 So hängt alles zusammen:
 
 ```
-Push auf main ──▶ GitHub Actions (macOS) baut WhoopPlus.ipa ──▶ Release "ios-latest"
+Merge auf main ──▶ GitHub Actions (macOS) baut WhoopPlus-0.1.<Lauf>.ipa ──▶ Release "ios-latest"
+                                                  │
+                                                  └─▶ SideStore-Quelle (source.json, Branch "sidestore")
                                                                     │
-iPhone: Safari lädt die IPA ──▶ SideStore signiert sie mit deiner Apple-ID ──▶ App auf dem Home-Bildschirm
+iPhone: SideStore sieht das Update ──▶ „Update“ antippen ──▶ signiert mit deiner Apple-ID ──▶ App aktualisiert
+```
+
+**Quelle für SideStore** (einmalig hinzufügen, siehe Abschnitt 3):
+
+```
+https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json
 ```
 
 - Es gibt keinen Server mehr. Alle Daten bleiben in der App auf dem iPhone.
@@ -28,11 +36,20 @@ iPhone: Safari lädt die IPA ──▶ SideStore signiert sie mit deiner Apple-I
 2. Der Workflow läuft auf einem macOS-Runner mit Xcode: Tests → Web-Oberfläche bauen → `npx cap sync ios`
    → unsignierter Xcode-Build → `WhoopPlus.ipa`.
 3. Die IPA landet
-   - als **Artefakt** am Workflow-Lauf (30 Tage) und
-   - im Release **`ios-latest`** (wird bei jedem Build ersetzt):
-     <https://github.com/DavThosty/Whoop-plus/releases/tag/ios-latest>
-4. Die Build-Nummer zählt automatisch hoch (Nummer des Workflow-Laufs), die Version kommt aus
-   `package.json`. In der App siehst du sie in iOS unter *Einstellungen → Allgemein → iPhone-Speicher → Whoop Plus*.
+   - als **Artefakt** am Workflow-Lauf (30 Tage),
+   - im Release **`ios-latest`** als `WhoopPlus-<Version>.ipa` (die letzten 10 Versionen bleiben) und als
+     `WhoopPlus.ipa` (immer die neueste): <https://github.com/DavThosty/Whoop-plus/releases/tag/ios-latest>
+   - und in der **SideStore-Quelle** `https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json`
+     (Datei `source.json` auf dem Branch `sidestore`, vom Workflow geschrieben – nicht von Hand ändern).
+4. **Versionsnummer:** `<Major>.<Minor>` aus `package.json` plus die Nummer des Workflow-Laufs, z. B.
+   **0.1.12 (Build 12)**. Jeder Merge auf `main` ergibt so automatisch eine höhere Version (die Lauf-Nummern
+   haben Lücken, weil auch Pull-Request-Läufe mitzählen – das ist normal). Für einen großen Sprung
+   `version` in `package.json` erhöhen, z. B. auf `0.2.0`.
+5. **„Was ist neu“** kommt aus der Commit-Nachricht des Merges (Titel und Beschreibung des Squash-Merges,
+   ohne Zeilen wie `Co-Authored-By:`, gekürzt auf ca. 600 Zeichen). Der Text steht in SideStore bei der
+   Version, im Release und in der App.
+6. In der App steht die Version ganz unten unter *Mehr* („Whoop Plus 0.1.12 (12)“). Nach einem Update zeigt
+   die App beim ersten Start einmal „Was ist neu in 0.1.12“ (nicht bei der allerersten Installation).
 
 **Manuell starten:** GitHub → *Actions* → *iOS-Build* → *Run workflow*.
 
@@ -132,19 +149,47 @@ Wichtig: **Vor dem ersten eigenen App-Install SideStore einmal so verlängern** 
 
 ---
 
-## 3. Whoop Plus installieren
+## 3. Whoop Plus installieren (über die Quelle)
+
+### 3.1 Einmalig: Quelle hinzufügen
+
+1. **LocalDevVPN** verbinden (WLAN an).
+2. **SideStore** öffnen → unten auf **„Sources“** → oben auf **„+“**.
+3. Diese Adresse einfügen und bestätigen (**„Add“ / „Hinzufügen“**):
+
+   ```
+   https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json
+   ```
+
+   Alternativ am iPhone in Safari diesen Link öffnen (funktioniert nur, wenn SideStore installiert ist):
+   `sidestore://source?url=https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json`
+4. Die Quelle **„Whoop Plus“** erscheint mit grünem Icon in der Liste.
+
+Das Repository ist öffentlich, eine Anmeldung bei GitHub ist nicht nötig.
+
+### 3.2 App installieren
+
+1. In SideStore unter *Sources* auf **„Whoop Plus“** tippen (oder unter *Browse* suchen) → bei der App auf
+   **„Free“ / „Install“** tippen.
+2. SideStore lädt die IPA, signiert sie mit deiner Apple-ID und installiert sie. „Whoop Plus“ erscheint auf dem
+   Home-Bildschirm und in SideStore unter *My Apps* mit dem Zähler „7 DAYS“.
+
+**Schon per IPA installiert?** Die Bundle-ID ist dieselbe (`de.steinerkn.whoopplus`), SideStore ordnet die
+installierte App der Quelle zu und zeigt künftige Updates an. Erscheint unter *My Apps* trotzdem kein Update,
+die App einmal aus der Quelle installieren (Abschnitt 3.2) – sie ersetzt die alte Version, **die Daten bleiben
+erhalten**.
+
+### 3.3 Ersatzweg: IPA von Hand installieren
+
+Falls die Quelle einmal nicht erreichbar ist:
 
 1. Am iPhone in **Safari** öffnen: <https://github.com/DavThosty/Whoop-plus/releases/tag/ios-latest>
-   (das Repository ist öffentlich, eine Anmeldung bei GitHub ist nicht nötig; bei einem privaten Repository
-   vorher in Safari bei GitHub anmelden).
 2. Unter *Assets* auf **`WhoopPlus.ipa`** tippen → **Laden**. Die Datei liegt danach in der Dateien-App unter
    *Downloads*.
 3. **LocalDevVPN** verbinden (WLAN an).
 4. Installieren – eine der beiden Varianten:
    - In **SideStore** → *My Apps* → oben links **„+“** → in der Dateien-Auswahl `WhoopPlus.ipa` wählen, **oder**
    - in der Dateien-App die IPA lange drücken → **Teilen** → **SideStore** (falls SideStore dort angeboten wird).
-5. SideStore signiert und installiert die App. „Whoop Plus“ erscheint auf dem Home-Bildschirm und in
-   SideStore unter *My Apps* mit dem Zähler „7 DAYS“.
 
 > Endet der Download in Safari als `.zip` statt `.ipa`: Datei in der Dateien-App in `WhoopPlus.ipa` umbenennen.
 
@@ -160,11 +205,19 @@ Wichtig: **Vor dem ersten eigenen App-Install SideStore einmal so verlängern** 
   SideStore abgelaufen, musst du es mit dem PC und iloader neu installieren (Abschnitt 2.3).
 - Ist Whoop Plus abgelaufen, startet die App nicht. **Daten gehen dabei nicht verloren** – einfach verlängern.
 
-## 5. Neue Version installieren
+## 5. Updates
 
-1. Neuen Build abwarten (GitHub → *Actions* → grüner Haken) oder manuell starten.
-2. Wie in Abschnitt 3 die neue `WhoopPlus.ipa` aus dem Release `ios-latest` laden und über SideStore
-   installieren. Sie ersetzt die alte Version, **alle Daten bleiben erhalten**, und die 7 Tage beginnen neu.
+1. Nach jedem Merge auf `main` (außer reinen Doku-Änderungen) baut GitHub in ca. 10–15 Minuten eine neue
+   Version und trägt sie in die Quelle ein (GitHub → *Actions* → grüner Haken).
+2. **LocalDevVPN** verbinden (WLAN an) → **SideStore** → *My Apps* → nach unten ziehen zum Aktualisieren.
+   Unter **„Updates“** steht Whoop Plus mit der neuen Version → **„Update“** antippen. Was neu ist, steht
+   in SideStore bei der App unter *Was ist neu / Version History*.
+3. SideStore lädt, signiert und installiert die neue Version. **Alle Daten bleiben erhalten**, und die 7 Tage
+   beginnen neu. Beim nächsten Öffnen zeigt Whoop Plus einmal „Was ist neu in …“.
+
+SideStore prüft die Quelle auch selbst beim Start bzw. im Hintergrund. GitHub liefert die Quelle mit bis zu
+5 Minuten Verzögerung aus – ist das Update noch nicht zu sehen, kurz warten und erneut aktualisieren.
+Ersatzweg ohne Quelle: Abschnitt 3.3 mit der neuesten `WhoopPlus.ipa`.
 
 > **Achtung: Whoop Plus niemals löschen**, solange du die Daten behalten willst. Beim Löschen der App
 > löscht iOS alle gespeicherten Messwerte. Vorher in der App unter *Mehr → Daten → Sicherung → Exportieren*
@@ -251,6 +304,16 @@ auch gelegentlich ohne erkennbaren Grund)
 4. **„Manage Pairing File“** → rechts neben **SideStore** auf **„Place“** klicken →
    „Pairing file placed successfully!“ erscheint grün.
    Anleitung: <https://docs.sidestore.io/docs/advanced/pairing-file>
+
+**SideStore: Quelle lässt sich nicht hinzufügen / kein Update sichtbar**
+- Adresse genau prüfen: `https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json`
+  (in Safari geöffnet muss eine JSON-Datei erscheinen).
+- Gibt es die Quelle noch nicht (404), ist noch kein Build mit dieser Funktion gelaufen: GitHub → *Actions*
+  → *iOS-Build* → *Run workflow*.
+- In SideStore unter *Sources* bzw. *My Apps* nach unten ziehen, um neu zu laden. Kurz nach einem Build kann
+  GitHub noch bis zu 5 Minuten die alte Quelle ausliefern.
+- Meldet SideStore beim Update einen Versions- oder Größenfehler, den Build nicht von Hand verändern – der
+  Workflow schreibt Version, Build-Nummer, Größe und Prüfsumme genau passend zur IPA in die Quelle.
 
 **SideStore: Grenze von 3 Apps oder 10 App-IDs erreicht**
 - Eine andere per SideStore installierte App entfernen. Bei der App-ID-Grenze bis zu 7 Tage warten.

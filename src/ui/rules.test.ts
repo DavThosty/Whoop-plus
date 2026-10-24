@@ -1,7 +1,7 @@
 (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env.TZ = 'Europe/Berlin';
 
 import { describe, expect, it } from 'vitest';
-import { ceremonyDue, storyDue } from './rules';
+import { ceremonyDue, storyDue, whatsNewAction } from './rules';
 
 const at = (hhmm: string, date = '2026-03-10') => new Date(`${date}T${hhmm}:00`);
 const sec = (d: Date) => d.getTime() / 1000;
@@ -41,5 +41,28 @@ describe('Morgen-Story', () => {
   it('ohne Schlaf oder schon gesehen: nein', () => {
     expect(storyDue({ ...base, now: at('08:00'), sleepEndSec: null })).toBe(false);
     expect(storyDue({ now: at('08:00'), today: '2026-03-10', storyShownDate: '2026-03-10', sleepEndSec: sec(at('07:00')) })).toBe(false);
+  });
+});
+
+describe('„Was ist neu“ nach einem Update', () => {
+  const base = { version: '0.1.12', changelog: 'Neu: Wecker' };
+  it('nach einem Update einmal zeigen', () => {
+    expect(whatsNewAction({ ...base, lastSeen: '0.1.11', hasData: true })).toBe('show');
+    expect(whatsNewAction({ ...base, lastSeen: '0.1.11', hasData: false })).toBe('show');
+  });
+  it('dieselbe Version nicht noch einmal', () => {
+    expect(whatsNewAction({ ...base, lastSeen: '0.1.12', hasData: true })).toBe('none');
+  });
+  it('Erstinstallation: nichts zeigen, nur Version merken', () => {
+    expect(whatsNewAction({ ...base, lastSeen: undefined, hasData: false })).toBe('mark');
+    expect(whatsNewAction({ ...base, lastSeen: null, hasData: false })).toBe('mark');
+  });
+  it('Update von einer Version ohne diese Funktion (Daten vorhanden, nichts gemerkt): zeigen', () => {
+    expect(whatsNewAction({ ...base, lastSeen: undefined, hasData: true })).toBe('show');
+  });
+  it('ohne Text nur merken, Entwicklungs-Build nie', () => {
+    expect(whatsNewAction({ ...base, changelog: '  ', lastSeen: '0.1.11', hasData: true })).toBe('mark');
+    expect(whatsNewAction({ version: 'dev', changelog: 'x', lastSeen: '0.1.11', hasData: true })).toBe('none');
+    expect(whatsNewAction({ version: '', changelog: 'x', lastSeen: undefined, hasData: true })).toBe('none');
   });
 });
