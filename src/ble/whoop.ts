@@ -609,6 +609,17 @@ export class WhoopDevice {
   }
 
   /**
+   * Kurzer Vibrationsimpuls (z. B. Workout-Zonenwechsel): nur RUN_HAPTICS_PATTERN, ohne RUN_ALARM –
+   * dadurch bleibt es bei einem kurzen Summen statt des längeren „Band finden“-Alarms.
+   */
+  async haptic(pattern = 2, loops = 1): Promise<void> {
+    this.requireConnected();
+    const p = Math.max(0, Math.min(255, Math.round(pattern)));
+    const l = Math.max(1, Math.min(10, Math.round(loops)));
+    await this.send(Opcode.RUN_HAPTICS_PATTERN, (s) => cmd.runHaptics(s, p, l), 'optional');
+  }
+
+  /**
    * Verlauf abholen: 0x16 senden, Blöcke sammeln, nach HISTORY_END erst in den Sink schreiben
    * und dann mit dem exakten Token bestätigen. Liefert die Zahl gespeicherter Datensätze.
    */

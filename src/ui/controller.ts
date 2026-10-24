@@ -22,6 +22,8 @@ export interface AppState {
   sync: SyncProgress | null;
   lastSync: number | null;
   computing: boolean;
+  /** Nach dem Sync: Daten werden gespeichert und ausgewertet (vom Sync-Ende bis alles fertig ist). */
+  postSync: boolean;
   /** Wird nach jeder Neuberechnung erhöht, damit Ansichten neu laden. */
   dataVersion: number;
   profile: Profile | null;
@@ -34,6 +36,7 @@ export interface AppState {
 }
 
 type Listener = (s: AppState) => void;
+type LiveListener = (live: LiveHr) => void;
 
 const LIVE_WINDOW_S = 600;
 const LIVE_FLUSH_MS = 30_000;
@@ -55,6 +58,7 @@ export class AppController {
     sync: null,
     lastSync: null,
     computing: false,
+    postSync: false,
     dataVersion: 0,
     profile: null,
     alarm: null,
@@ -66,6 +70,8 @@ export class AppController {
   };
 
   private listeners = new Set<Listener>();
+  private liveListeners = new Set<LiveListener>();
+  private workoutAwake = false;
   private device: WhoopDevice | null = null;
   private deviceOff: (() => void)[] = [];
   private touched: { from: number; to: number } | null = null;
@@ -83,6 +89,12 @@ export class AppController {
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** Jede gültige Live-Messung (für den Workout-Modus, unabhängig vom 10-Minuten-Fenster). */
+  subscribeLive(fn: LiveListener): () => void {
+    this.liveListeners.add(fn);
+    return () => this.liveListeners.delete(fn);
   }
 
   private set(patch: Partial<AppState>) {
@@ -127,7 +139,7 @@ export class AppController {
       return;
     }
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && this.state.conn !== 'disconnected') void this.requestWakeLock();
+      if (document.visibilityState === 'visible' && (this.state.conn !== 'disconnected' || this.workoutAwake)) void this.requestWakeLock();
     });
     if (new URLSearchParams(location.search).has('demo')) await this.startDemo();
     else if (this.state.supported) void this.tryReconnect();
@@ -168,7 +180,7 @@ export class AppController {
       this.stopLiveTimer();
       this.set({ liveOn: false, live: null });
       void this.flushLive();
-      void this.releaseWakeLock();
+      if (!this.workoutAwake) void this.releaseWakeLock();
       if (!this.userDisconnected && !this.state.demo) this.scheduleReconnect();
     }
   }
@@ -264,6 +276,24 @@ export class AppController {
     }
   }
 
+  /** Kurzer Vibrationsimpuls am Band (nur RUN_HAPTICS_PATTERN). Fehler werden nur protokolliert. */
+  async haptic(pattern?: number, loops?: number): Promise<void> {
+    const dev = this.device;
+    if (!dev || (this.state.conn !== 'connected' && this.state.conn !== 'syncing')) return;
+    try {
+      await dev.haptic(pattern, loops);
+    } catch (e) {
+      this.log(`Haptik: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Bildschirm während eines Workouts wach halten (zusätzlich zur Verbindung). */
+  async keepAwake(on: boolean): Promise<void> {
+    this.workoutAwake = on;
+    if (on) await this.requestWakeLock();
+    else if (this.state.conn === 'disconnected') await this.releaseWakeLock();
+  }
+
   async setAlarm(at: Date | null): Promise<void> {
     if (!this.device) return;
     try {
@@ -337,6 +367,8 @@ export class AppController {
     try {
       const { createFakeBluetooth } = await import('../sim/fake-strap');
       const fake = createFakeBluetooth({ days: 10 });
+      // Nur im Demo-Modus: simuliertes Band für Vorführungen/Tests erreichbar machen (z. B. Zielpuls setzen).
+      (window as unknown as { __whoopDemoStrap?: unknown }).__whoopDemoStrap = fake.strap;
       this.set({ demo: true, supported: true, error: null });
       if (!this.state.profile) {
         const p: Profile = { age: 35, weightKg: 78, sex: 'm', maxHr: 185, sleepNeedH: 8 };
@@ -364,6 +396,7 @@ export class AppController {
   }
 
   private async onSyncDone(sync: SyncProgress): Promise<void> {
+    this.set({ postSync: true });
     try {
       if (sync.ok !== false) {
         const now = Math.floor(Date.now() / 1000);
@@ -383,6 +416,8 @@ export class AppController {
       await this.refreshStorage();
     } catch (e) {
       this.fail('Nach dem Sync', e);
+    } finally {
+      this.set({ postSync: false });
     }
   }
 
@@ -425,6 +460,13 @@ export class AppController {
     const series = this.state.liveSeries.filter((p) => p.ts > live.ts - LIVE_WINDOW_S);
     if (live.hr > 0) series.push({ ts: live.ts, hr: live.hr });
     this.set({ live, liveSeries: series });
+    for (const fn of this.liveListeners) {
+      try {
+        fn(live);
+      } catch (e) {
+        this.log(`Live-Listener: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (live.hr > 0 && live.wearing) {
       this.liveBuffer.push({ ts: live.ts, hr: live.hr, rr: live.rr, src: 'live' });
     }

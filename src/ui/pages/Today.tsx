@@ -1,117 +1,176 @@
-import { useState } from 'preact/hooks';
-import type { ExplainKey } from '../../analytics';
+import { useRef, useState } from 'preact/hooks';
+import type { Recommendation } from '../../analytics';
+import { useTween } from '../anim';
+import type { Tab } from '../App';
+import { Delta, GlassCard, Icon, LineChart, RangeBar, Ring } from '../components';
 import { app } from '../controller';
-import { Card, LineChart, Ring, Stat } from '../components';
-import { ExplainSheet } from '../explain';
-import { clock, dateLabel, duration, durationShort, num, recoveryColor, today, ZONE_COLORS } from '../format';
-import { useApp, useDay } from '../hooks';
-import { DayNav } from './DayNav';
+import { flow, type DetailKind } from '../flow';
+import { addDays, clockMin, COLORS, durationShort, num, recoveryHex, recoveryState, today } from '../format';
+import { useApp, useDay, usePrevious } from '../hooks';
+import { buildRecommendation, vitals } from '../insights';
 
-const linkBtn = { background: 'none', border: 0, padding: 0, cursor: 'pointer' } as const;
-
-export function Today(props: { date: string; setDate: (d: string) => void; goTo: (tab: string) => void }) {
+export function Today(props: { date: string; setDate: (d: string) => void; goTo: (tab: Tab) => void }) {
   const s = useApp();
   const day = useDay(props.date, s.dataVersion);
-  const [topic, setTopic] = useState<ExplainKey | null>(null);
+  const prev = usePrevious(props.date, s.dataVersion);
   const isToday = props.date === today();
+  const [dir, setDir] = useState<'l' | 'r' | null>(null);
+  const touch = useRef<{ x: number; y: number } | null>(null);
+
+  const go = (delta: number) => {
+    const next = addDays(props.date, delta);
+    if (next > today()) return;
+    setDir(delta > 0 ? 'l' : 'r');
+    props.setDate(next);
+  };
+
+  const onTouchStart = (e: TouchEvent) => {
+    const t = e.touches[0];
+    touch.current = t ? { x: t.clientX, y: t.clientY } : null;
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    const start = touch.current;
+    touch.current = null;
+    const t = e.changedTouches[0];
+    if (!start || !t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.6) go(dx < 0 ? 1 : -1);
+  };
+
+  const animKey = `${props.date}|${day === undefined ? '…' : day ? `${day.recovery}|${day.strain > 0}` : 'none'}`;
+  const t = useTween(animKey, 1600, 120, day !== undefined);
+  const tCards = useTween(animKey, 1400, 380, day !== undefined);
+
+  const reco = isToday ? buildRecommendation(day, prev, s.profile) : null;
+  const v = vitals(day, prev);
+  const open = (kind: DetailKind) => (rect: DOMRect) => flow.openDetail(kind, props.date, rect);
+  const noData = s.stats?.count === 0 && s.conn === 'disconnected';
+
+  if (noData && !day) return <Welcome goTo={props.goTo} />;
 
   const rec = day?.recovery ?? null;
-  const strain = day?.strain ?? null;
-  const sleepPerf = day?.sleepPerformance ?? null;
-  const zoneMax = Math.max(1, ...(day?.zoneMinutes ?? [0]));
+  const recColor = recoveryHex(rec);
 
   return (
-    <div>
-      <DayNav date={props.date} setDate={props.setDate} />
-
+    <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       {!s.profile && (
-        <div class="note warn" style={{ marginBottom: 12 }}>
-          Bitte zuerst dein{' '}
-          <a href="#" onClick={(e) => { e.preventDefault(); props.goTo('profil'); }} style={{ color: 'var(--text)' }}>Profil</a>{' '}
-          ausfüllen – ohne Alter, Gewicht und Maximalpuls lassen sich Strain und Kalorien nicht berechnen.
-        </div>
+        <button class="note warn" style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 14, cursor: 'pointer' }} onClick={() => props.goTo('mehr')}>
+          Bitte zuerst dein <b style={{ color: 'var(--text)' }}>Profil</b> ausfüllen – ohne Alter, Gewicht und Maximalpuls lassen sich Strain und Kalorien nicht berechnen. ›
+        </button>
       )}
 
-      <div class="rings">
-        <Ring
-          label="Recovery" color={recoveryColor(rec)} fraction={rec == null ? null : rec / 100}
-          value={rec == null ? '–' : `${rec}%`}
-          sub={rec == null && day ? `Kalibrierung ${Math.min(day.baselineNights, 4)}/4` : undefined}
-          onClick={() => setTopic('recovery')}
-        />
-        <Ring
-          label="Strain" color="var(--blue)" fraction={strain == null ? null : strain / 21}
-          value={strain == null ? '–' : num(strain, 1)} onClick={() => setTopic('strain')}
-        />
-        <Ring
-          label="Schlaf" color="var(--sleep)" fraction={sleepPerf == null ? null : sleepPerf / 100}
-          value={sleepPerf == null ? '–' : `${Math.round(sleepPerf)}%`}
-          sub={day?.sleep ? `${durationShort(day.sleep.asleepMin)} h` : undefined}
-          onClick={() => setTopic('sleep')}
-        />
-      </div>
-
-      {day === null && (
-        <div class="note" style={{ marginBottom: 12 }}>
-          Für {dateLabel(props.date).toLowerCase() === 'heute' ? 'heute' : dateLabel(props.date)} gibt es noch keine Auswertung.
-          {isToday && ' Verbinde dein Band im Tab „Band“, damit der Verlauf geladen wird.'}
-        </div>
-      )}
-
-      {isToday && s.conn !== 'disconnected' && <LiveCard />}
-
-      {day && (
-        <Card title="Erholung">
-          <div class="stats">
-            <Stat value={num(day.sleep?.hrvRmssd)} unit="ms" label="HRV (RMSSD)" />
-            <Stat value={num(day.sleep?.restingHr)} unit="bpm" label="Ruhepuls" />
-            <Stat value={day.sleep ? clock(day.sleep.end) : '–'} label="Aufgewacht" />
-          </div>
-          <div class="row between small muted" style={{ marginTop: 10 }}>
-            <button class="muted small" style={linkBtn} onClick={() => setTopic('hrv')}>ⓘ HRV</button>
-            <button class="muted small" style={linkBtn} onClick={() => setTopic('restingHr')}>ⓘ Ruhepuls</button>
-            <button class="muted small" style={linkBtn} onClick={() => props.goTo('schlaf')}>Schlaf-Details →</button>
-          </div>
-        </Card>
-      )}
-
-      {day && (
-        <Card title={isToday ? 'Belastung bisher' : 'Belastung'} help={() => setTopic('strain')}>
-          <div class="stats" style={{ marginBottom: 14 }}>
-            <Stat value={num(day.kcal)} unit="kcal" label="Energie" />
-            <Stat value={num(day.avgHr)} unit="bpm" label="Ø Puls wach" />
-            <Stat value={num(day.maxHr)} unit="bpm" label="Max. Puls" />
-          </div>
-          <div class="zones">
-            {day.zoneMinutes.map((m, i) => (
-              <div class="zone" key={i}>
-                <span class="muted">Zone {i + 1}</span>
-                <div class="bar"><span style={{ width: `${(m / zoneMax) * 100}%`, background: ZONE_COLORS[i] }} /></div>
-                <span style={{ textAlign: 'right' }}>{duration(m)}</span>
+      <div key={props.date} class={dir === 'l' ? 'slide-l' : dir === 'r' ? 'slide-r' : ''}>
+        <section class="hero">
+          <button class="day-arrow l" aria-label="Vorheriger Tag" onClick={() => go(-1)}><Icon name="chevL" /></button>
+          <button class="day-arrow r" aria-label="Nächster Tag" disabled={isToday} onClick={() => go(1)}><Icon name="chevR" /></button>
+          <div class="hero-ring" role="button" tabIndex={0} aria-label={`Recovery ${rec ?? '–'} %`}
+            onClick={(e) => flow.openDetail('recovery', props.date, (e.currentTarget as HTMLElement).getBoundingClientRect())}>
+            <Ring size={248} stroke={17} fraction={rec == null ? null : rec / 100} color={recColor} t={t}>
+              <div class="eyebrow">Recovery</div>
+              <div class="hero-value">
+                {rec == null ? '–' : Math.round(rec * t)}
+                {rec != null && <small>%</small>}
               </div>
-            ))}
+            </Ring>
           </div>
-          <div class="small muted" style={{ marginTop: 10 }}>
-            Datenabdeckung {duration(day.coveredMin)} · berechnet {clock(day.computedAt / 1000)} ·{' '}
-            <button class="muted small" style={{ ...linkBtn, textDecoration: 'underline' }} onClick={() => setTopic('calories')}>
-              Kalorien?
+          <div class="hero-state" style={{ color: rec == null ? 'var(--text)' : recColor }}>
+            {day === undefined ? ' ' : recoveryState(day)}
+          </div>
+          <div class="hero-sub">
+            {day?.sleep
+              ? `HRV ${num(day.sleep.hrvRmssd)} ms · Ruhepuls ${num(day.sleep.restingHr)} bpm`
+              : day === null
+                ? isToday ? 'Für heute gibt es noch keine Auswertung.' : 'Für diesen Tag gibt es keine Auswertung.'
+                : ' '}
+          </div>
+          {isToday && day?.sleep && (
+            <button class="chip" onClick={() => flow.openStory(props.date)}>
+              <Icon name="story" /> Story ansehen
             </button>
-          </div>
-        </Card>
-      )}
+          )}
+        </section>
 
-      {topic && (
-        <ExplainSheet
-          topic={topic}
-          onClose={() => setTopic(null)}
-          extra={topic === 'recovery' && rec == null ? (
-            <div class="note warn" style={{ marginBottom: 8 }}>
-              Die Recovery braucht mindestens 4 Nächte mit HRV und Ruhepuls als Vergleichsbasis. Bisher: {day?.baselineNights ?? 0}.
-            </div>
-          ) : undefined}
-        />
-      )}
+        {reco && <RecoCard reco={reco} strain={day?.strain ?? null} t={tCards} onOpen={open('strain')} />}
+
+        {isToday && s.conn !== 'disconnected' && <LiveCard />}
+
+        {day && (
+          <div class="grid2">
+            <GlassCard title="Strain" dot={COLORS.blue} class="metric tight" onOpen={open('strain')}>
+              <div class="metric-body">
+                <Ring size={56} stroke={7} fraction={day.strain / 21} color={COLORS.blue} t={tCards} />
+                <div>
+                  <div class="val">{num(day.strain * tCards, 1)}</div>
+                  <div class="sub">von 21</div>
+                </div>
+              </div>
+              <RangeBar value={day.strain} range={reco?.strainRange ?? null} t={tCards} legend={false} />
+            </GlassCard>
+
+            <GlassCard title="Schlaf" dot={COLORS.sleep} class="metric tight" onOpen={open('sleep')}>
+              <div class="metric-body">
+                <Ring size={56} stroke={7} fraction={day.sleepPerformance == null ? null : day.sleepPerformance / 100} color={COLORS.sleep} t={tCards}>
+                  <span class="mini">{day.sleepPerformance == null ? '–' : Math.round(day.sleepPerformance * tCards)}</span>
+                </Ring>
+                <div>
+                  <div class="val">{day.sleep ? durationShort(day.sleep.asleepMin) : '–'}<span class="unit">h</span></div>
+                  <div class="sub">Leistung {day.sleepPerformance == null ? '–' : `${Math.round(day.sleepPerformance)} %`}</div>
+                </div>
+              </div>
+            </GlassCard>
+
+            <GlassCard title="HRV" dot={COLORS.green} class="metric tight" onOpen={open('hrv')}>
+              <div class="val">{num(v.hrv)}<span class="unit">ms</span></div>
+              <div class="sub">{v.hrvTypical ? `Normal ${num(v.hrvTypical)} ms` : 'Baseline entsteht'}</div>
+              <div><Delta value={v.hrvDeltaPct} text={`${num(Math.abs(v.hrvDeltaPct ?? 0))} %`} goodWhenUp flatBelow={2} /></div>
+            </GlassCard>
+
+            <GlassCard title="Ruhepuls" dot={COLORS.hr} class="metric tight" onOpen={open('rhr')}>
+              <div class="val">{num(v.rhr)}<span class="unit">bpm</span></div>
+              <div class="sub">{v.rhrMean ? `Normal ${num(v.rhrMean)} bpm` : 'Baseline entsteht'}</div>
+              <div><Delta value={v.rhrDelta} text={`${num(Math.abs(v.rhrDelta ?? 0))} bpm`} goodWhenUp={false} flatBelow={0.5} /></div>
+            </GlassCard>
+
+            <GlassCard title="Energie" dot="#ff9f0a" class="span2 tight" onOpen={open('strain')}>
+              <div class="row between" style={{ alignItems: 'flex-end' }}>
+                <div>
+                  <div class="big">{num(Math.round(day.kcal * tCards))}<span class="unit">kcal</span></div>
+                  <div class="sub muted small" style={{ marginTop: 6 }}>{isToday ? 'Bisher heute verbraucht' : 'Verbrauch des Tages'}</div>
+                </div>
+                <div class="row" style={{ gap: 18 }}>
+                  <div class="center"><div class="mid" style={{ fontSize: 22 }}>{num(day.avgHr)}</div><div class="tiny faint">Ø PULS</div></div>
+                  <div class="center"><div class="mid" style={{ fontSize: 22 }}>{num(day.maxHr)}</div><div class="tiny faint">MAX</div></div>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+        )}
+      </div>
     </div>
+  );
+}
+
+function RecoCard(props: { reco: Recommendation; strain: number | null; t: number; onOpen: (r: DOMRect) => void }) {
+  const r = props.reco;
+  const accent = r.level === 'high' ? COLORS.green : r.level === 'moderate' ? COLORS.yellow : r.level === 'low' ? COLORS.red : COLORS.sleep;
+  return (
+    <GlassCard title="Tagesempfehlung" dot={accent} onOpen={props.onOpen}>
+      <p class="reco-title">{r.title}</p>
+      <p class="reco-text">{r.text}</p>
+      {r.note && <p class="reco-text faint small" style={{ marginTop: 8 }}>{r.note}</p>}
+      <div class="reco-stats">
+        <div class="reco-stat">
+          <div class="k"><Icon name="bolt" /> Ziel-Strain</div>
+          <div class="v">{r.strainRange[0]}–{r.strainRange[1]}</div>
+        </div>
+        <div class="reco-stat">
+          <div class="k"><Icon name="moon" /> Ins Bett</div>
+          <div class="v">{clockMin(r.bedtime.minutesOfDay)}</div>
+        </div>
+      </div>
+      <RangeBar value={props.strain} range={r.strainRange} t={props.t} />
+    </GlassCard>
   );
 }
 
@@ -119,31 +178,77 @@ function LiveCard() {
   const s = useApp();
   const hr = s.live && s.live.hr > 0 ? s.live.hr : null;
   const busy = s.conn !== 'connected' && s.conn !== 'syncing';
+  const beat = hr ? `${(60 / hr).toFixed(2)}s` : '1s';
   return (
-    <Card title="Live-Puls">
-      <div class="row between">
+    <GlassCard title="Live" dot={COLORS.hr} right={s.liveOn ? <span class="tiny faint">LETZTE 10 MIN</span> : undefined}>
+      <div class="live-row">
         <div class="live-hr">
-          <span class="heart">♥</span>
-          <span class="big">{hr ?? '–'}</span>
-          <span class="muted">bpm</span>
+          <span class={`heart ${hr ? 'beat' : ''}`} style={{ animationDuration: beat }}><Icon name="heart" /></span>
+          <span class="val">{hr ?? '–'}</span>
+          <span class="muted small">bpm</span>
         </div>
-        <div style={{ width: 150 }}>
-          <button class={`btn ${s.liveOn ? '' : 'blue'}`} onClick={() => app.setLive(!s.liveOn)} disabled={busy}>
-            {s.liveOn ? 'Live stoppen' : 'Live starten'}
-          </button>
-        </div>
+        <button class="btn small" disabled={busy} onClick={() => app.setLive(!s.liveOn)}>
+          {s.liveOn ? 'Live aus' : 'Live an'}
+        </button>
       </div>
-      {s.live && !s.live.wearing && <div class="note warn" style={{ marginTop: 10 }}>Das Band wird gerade nicht getragen.</div>}
-      {s.liveOn && (
+      {s.live && !s.live.wearing && <div class="note warn" style={{ marginTop: 12 }}>Das Band wird gerade nicht getragen.</div>}
+      {s.liveOn && s.liveSeries.length > 1 && (
         <div style={{ marginTop: 12 }}>
-          <LineChart
-            height={110}
-            gap={10}
-            series={[{ points: s.liveSeries.map((p) => ({ x: p.ts, y: p.hr })), color: 'var(--hr)', fill: true }]}
-          />
-          <div class="small muted">Letzte 10 Minuten</div>
+          <LineChart height={90} gap={10} lastDot series={[{ points: s.liveSeries.map((p) => ({ x: p.ts, y: p.hr })), color: COLORS.hr, fill: true }]} />
         </div>
       )}
-    </Card>
+      <button class="btn primary" style={{ marginTop: 14 }} disabled={busy} onClick={() => void flow.startWorkout()}>
+        <Icon name="bolt" /> Workout starten
+      </button>
+    </GlassCard>
+  );
+}
+
+const FIRST_STEPS = [
+  'Offizielle Whoop-App löschen oder zumindest beenden – das Band lässt nur eine Verbindung zu.',
+  'iOS-Einstellungen → Bluetooth → bei „WHOOP …“ auf ⓘ → „Dieses Gerät ignorieren“.',
+  'Band aufladen und anlegen, dann „Band verbinden“ tippen und das Band auswählen.',
+  'Beim ersten Mal fragt iOS nach der Kopplung – bestätigen. Ohne Kopplung ignoriert das Band alle Befehle.',
+  'Die App beim Synchronisieren geöffnet lassen; im Hintergrund kann Bluefy keine Verbindung halten.',
+];
+
+export function FirstSteps() {
+  return (
+    <ol class="steps">
+      {FIRST_STEPS.map((x) => <li key={x}>{x}</li>)}
+    </ol>
+  );
+}
+
+function Welcome(props: { goTo: (tab: Tab) => void }) {
+  const s = useApp();
+  const t = useTween('welcome', 2200, 200);
+  return (
+    <div class="rise">
+      <section class="glass card center" style={{ paddingTop: 28 }}>
+        <Ring size={120} stroke={12} fraction={0.72} color={COLORS.green} t={t} class="welcome-ring" />
+        <h2 style={{ fontSize: 26, letterSpacing: '-0.035em', margin: '0 0 8px' }}>Willkommen bei Whoop Plus</h2>
+        <p class="muted" style={{ margin: '0 0 20px', fontSize: 15 }}>
+          Dein WHOOP 4.0 – ohne Abo. Schlaf, HRV, Recovery und Strain werden direkt auf diesem iPhone berechnet.
+        </p>
+        <div class="btns">
+          {!s.profile && <button class="btn" onClick={() => props.goTo('mehr')}><Icon name="user" /> 1. Profil ausfüllen</button>}
+          {s.supported ? (
+            <button class="btn primary" onClick={() => app.connect()}><Icon name="band" /> {s.profile ? 'Band verbinden' : '2. Band verbinden'}</button>
+          ) : (
+            <>
+              <div class="note warn" style={{ textAlign: 'left' }}>
+                Dieser Browser kann kein Bluetooth. Öffne die App auf dem iPhone in <b>Bluefy</b> (kostenlos im App Store). Safari unterstützt Web Bluetooth nicht.
+              </div>
+              <button class="btn primary" onClick={() => app.startDemo()}><Icon name="play" /> Demo starten</button>
+            </>
+          )}
+        </div>
+      </section>
+      <div class="section-label">Vor dem ersten Verbinden</div>
+      <section class="glass card">
+        <FirstSteps />
+      </section>
+    </div>
   );
 }

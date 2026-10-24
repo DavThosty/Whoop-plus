@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
-import { getDay, getDays, getSamples } from '../store/db';
+import type { WorkoutRecord } from '../analytics/workout';
+import { getDay, getDays, getSamples, getWorkouts } from '../store/db';
 import type { DailySummary, SampleRecord } from '../types';
 import { app, type AppState } from './controller';
+import { addDays } from './format';
 
 export function useApp(): AppState {
   const [s, setS] = useState(app.state);
@@ -55,4 +57,30 @@ function minuteMeans(samples: SampleRecord[]): { ts: number; hr: number }[] {
   }
   if (n) out.push({ ts: minute, hr: sum / n });
   return out;
+}
+
+/** Die bis zu 30 Vortage eines Datums (für Baseline, Trends und Empfehlung). */
+export function usePrevious(date: string, version: number): DailySummary[] {
+  return useDays(addDays(date, -30), addDays(date, -1), version);
+}
+
+/** Alle gespeicherten Workouts, neueste zuerst. */
+export function useWorkouts(version: number): WorkoutRecord[] | null {
+  const [list, setList] = useState<WorkoutRecord[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getWorkouts().then((w) => alive && setList(w)).catch(() => alive && setList([]));
+    return () => { alive = false; };
+  }, [version]);
+  return list;
+}
+
+/** Abonniert einen einfachen Store mit subscribe()/state. */
+export function useStore<S>(store: { state: S; subscribe(fn: (s: S) => void): () => void }): S {
+  const [s, setS] = useState(store.state);
+  useEffect(() => {
+    setS(store.state);
+    return store.subscribe(setS);
+  }, [store]);
+  return s;
 }
