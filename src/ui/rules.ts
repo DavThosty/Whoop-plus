@@ -29,3 +29,18 @@ export function storyDue(p: { now: Date; today: string; storyShownDate: string |
   if (p.sleepEndSec == null) return false;
   return p.now.getTime() / 1000 - p.sleepEndSec >= STORY_MIN_AWAKE_SEC;
 }
+
+/**
+ * „Was ist neu“ nach einem Update: einmal pro Version.
+ * - `show`: Hinweis zeigen (beim Schließen wird die Version gemerkt),
+ * - `mark`: nur die Version merken (erste Installation – es gibt noch nichts „Neues“ – oder kein Text vorhanden),
+ * - `none`: nichts tun (schon gesehen oder Entwicklungs-Build).
+ * Ohne gemerkte Version, aber mit vorhandenen Daten war schon eine ältere Version installiert (vor dieser Funktion) → zeigen.
+ */
+export function whatsNewAction(p: { version: string; lastSeen: string | null | undefined; hasData: boolean; changelog: string }): 'show' | 'mark' | 'none' {
+  if (!p.version || p.version === 'dev') return 'none';
+  if (p.lastSeen === p.version) return 'none';
+  if (p.lastSeen == null && !p.hasData) return 'mark';
+  if (!p.changelog.trim()) return 'mark';
+  return 'show';
+}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { Icon, Sheet } from './components';
+import { NotifPermissionSheet } from './native-ui';
+import { Icon, Sheet, WhatsNewSheet } from './components';
 import { app } from './controller';
 import { DetailView } from './details';
 import { flow } from './flow';
@@ -64,10 +65,11 @@ export function App() {
     window.scrollTo(0, 0);
   }, [tab]);
 
-  // Morgen-Story, sobald im Hintergrund Ruhe ist (nach Start, Sync und Berechnung).
+  // Morgen-Story und danach „Was ist neu“, sobald im Hintergrund Ruhe ist (nach Start, Sync und Berechnung)
+  // und kein anderes Vollbild offen ist. Beide prüfen selbst, ob sie dran sind.
   useEffect(() => {
-    if (s.statsLoaded) void flow.maybeAutoStory();
-  }, [s.dataVersion, s.conn, s.postSync, s.computing, s.statsCount, s.statsLoaded, !!f.detail, w.phase, w.recovery, f.connectPrompt]);
+    if (s.statsLoaded) void flow.maybeAutoStory().then(() => flow.maybeWhatsNew());
+  }, [s.dataVersion, s.conn, s.postSync, s.computing, s.statsCount, s.statsLoaded, !!f.detail, w.phase, w.recovery, f.connectPrompt, !!f.story, f.ceremony, !!f.whatsNew]);
 
   // Glow-Farbe folgt der Recovery des angezeigten Tags (auf anderen Seiten: heute).
   const glowDay = useDay(tab === 'heute' || tab === 'schlaf' ? date : today(), s.dataVersion);
@@ -148,6 +150,9 @@ export function App() {
       {f.story && <Story date={f.story.date} />}
       {f.ceremony && <Ceremony />}
       {f.connectPrompt && <ConnectPrompt goTo={goTo} />}
+      {/* Nur wenn sonst nichts im Vordergrund ist (Overlay-Regeln wie bei „Was ist neu“). */}
+      {!overlayOpen && !f.connectPrompt && !f.whatsNew && w.phase === 'idle' && !w.recovery && <NotifPermissionSheet />}
+      {f.whatsNew && !f.ceremony && <WhatsNewSheet version={f.whatsNew.version} text={f.whatsNew.text} onClose={() => void flow.closeWhatsNew()} />}
       {w.recovery && w.phase === 'idle' && !f.ceremony && <RecoveryPrompt />}
     </>
   );

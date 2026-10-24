@@ -19,11 +19,12 @@ Das dauert etwa 20 Minuten.
 ## Was das Programm für dich erledigt
 
 - Es prüft, ob dein Windows passt.
-- Es installiert das kostenlose **Apple-Programm**, damit der PC das iPhone erkennt (iTunes oder „Apple-Geräte“).
+- Es installiert das kostenlose **Apple-Programm** iTunes, damit der PC das iPhone erkennt (klappt das nicht: „Apple-Geräte“).
   Was schon da ist, wird übersprungen.
 - Es erkennt von selbst, wenn das iPhone per Kabel angeschlossen ist.
 - Es lädt das Programm **iloader** (bringt SideStore aufs iPhone), installiert es und hält es aktuell.
 - Am Ende zeigt es einen QR-Code: Mit der iPhone-Kamera scannen, und SideStore fügt Whoop Plus hinzu.
+  Danach kommen Updates direkt in SideStore.
 
 Fragt Windows „Möchten Sie zulassen, dass …“, klicke auf **Ja**. Das passiert nur beim Installieren.
 
@@ -55,7 +56,8 @@ Klicke auf **Hilfe**. Dann ist ein Fehlerbericht kopiert: In eine Nachricht einf
 Person schicken, die dir hilft. Der Bericht liegt auch hier:
 `%LOCALAPPDATA%\WhoopPlusSetup\log.txt`. Er enthält keine Apple-ID und keine Passwörter.
 
-Die ausführliche Anleitung ohne Programm steht in [docs/IOS.md](../../docs/IOS.md).
+Die Anleitung für alles Weitere (Whoop Plus installieren, automatisch verlängern, Updates) steht in
+[docs/ANLEITUNG.md](../../docs/ANLEITUNG.md), die Einrichtung von Hand in [docs/TECHNIK.md](../../docs/TECHNIK.md).
 
 ---
 
@@ -96,5 +98,5 @@ Hinweise:
   ersatzweise USB-Gerät mit Hersteller `05AC`.
 - iloader: neueste Version über die GitHub-API (`nab138/iloader`), ersatzweise `latest.json`; Download
   wird auf Größe und – falls GitHub sie liefert – SHA-256 geprüft und mit `msiexec /qb!` installiert.
-- Apple-Programm: Windows 11 zuerst „Apple-Geräte“ aus dem Microsoft Store (`9NP83LWLPZ9K`), Windows 10 zuerst
-  iTunes (`Apple.iTunes`), beides über winget; ohne winget öffnet sich Apples Download-Seite.
+- Apple-Programm: wie von SideStore empfohlen zuerst iTunes (`Apple.iTunes`), ersatzweise „Apple-Geräte“ aus dem
+  Microsoft Store (`9NP83LWLPZ9K`), beides über winget; ohne winget öffnet sich Apples Download-Seite.

@@ -160,11 +160,11 @@ Describe 'Windows-Prüfung' {
 }
 
 Describe 'Apple-Programm installieren' {
-    It 'Windows 11 mit winget: zuerst Apple-Geräte' {
-        Get-AppleInstallMethods -IsWindows11 $true -WingetAvailable $true | Should -Be @('AppleDevicesStore', 'ITunesWinget', 'Manual')
-    }
-    It 'Windows 10 mit winget: zuerst iTunes' {
-        Get-AppleInstallMethods -IsWindows11 $false -WingetAvailable $true | Should -Be @('ITunesWinget', 'AppleDevicesStore', 'Manual')
+    It 'mit winget: iTunes zuerst (SideStore-Empfehlung), auch unter Windows <Version>' -TestCases @(
+        @{ Version = '10'; Win11 = $false }
+        @{ Version = '11'; Win11 = $true }
+    ) {
+        Get-AppleInstallMethods -IsWindows11 $Win11 -WingetAvailable $true | Should -Be @('ITunesWinget', 'AppleDevicesStore', 'Manual')
     }
     It 'ohne winget: Download-Seite' {
         @(Get-AppleInstallMethods -IsWindows11 $true -WingetAvailable $false) | Should -Be @('Manual')
@@ -331,6 +331,18 @@ Describe 'Links und QR-Codes' {
     It 'baut den SideStore-Link zum Hinzufügen der Quelle' {
         Get-SideStoreSourceDeepLink 'https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json' |
             Should -Be 'sidestore://source?url=https%3A%2F%2Fraw.githubusercontent.com%2FDavThosty%2FWhoop-plus%2Fsidestore%2Fsource.json'
+    }
+    It 'Hilfe-Links zeigen auf die Anleitung (docs/ANLEITUNG.md) mit gültigem Abschnitt' {
+        $script:Config.RefreshHelpUrl | Should -Match '/docs/ANLEITUNG\.md#4-nie-mehr-dran-denken-automatisch-verl%C3%A4ngern$'
+        $guide = Join-Path $PSScriptRoot '../../../docs/ANLEITUNG.md'
+        if (Test-Path $guide) {
+            # GitHub-Anker: Kleinbuchstaben, Satzzeichen weg, Leerzeichen -> Bindestrich
+            $anchors = foreach ($h in (Get-Content $guide -Encoding UTF8 | Where-Object { $_ -match '^#{1,6} ' })) {
+                (($h -replace '^#+\s+', '').ToLowerInvariant() -replace '[^\p{L}\p{Nd} -]', '') -replace ' ', '-'
+            }
+            $anchor = [System.Uri]::UnescapeDataString(($script:Config.RefreshHelpUrl -split '#')[1])
+            $anchors | Should -Contain $anchor
+        }
     }
     It 'Adressen im Bild-Generator passen zu den Einstellungen im Skript' {
         $generator = Get-Content (Join-Path $PSScriptRoot '../assets/render-assets.cjs') -Raw

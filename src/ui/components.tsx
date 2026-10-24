@@ -234,6 +234,15 @@ export function Sheet(props: { title: string; onClose: () => void; children: Com
   );
 }
 
+/** „Was ist neu in 0.1.12“ – Text aus dem Merge-Commit des Builds (Zeilen und „•“-Listen bleiben erhalten). */
+export function WhatsNewSheet(props: { version: string; text: string; onClose: () => void }) {
+  return (
+    <Sheet title={`Was ist neu in ${props.version}`} onClose={props.onClose}>
+      <p class="whats-new">{props.text}</p>
+    </Sheet>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Diagramme (Breite wird gemessen, damit Text nicht verzerrt)
 

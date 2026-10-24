@@ -127,6 +127,11 @@ export class AppController {
     this.set({ error: `${context}: ${msg}` });
   }
 
+  /** Zeile ins Protokoll (für Hintergrundaufgaben wie die automatische Sicherung – ohne Fehlerbanner). */
+  note(line: string) {
+    this.log(line);
+  }
+
   clearError() {
     this.set({ error: null });
   }

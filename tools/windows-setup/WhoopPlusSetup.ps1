@@ -32,7 +32,8 @@ $script:Config = @{
     LocalDevVpnUrl       = 'https://apps.apple.com/app/localdevvpn/id6755608044'
     SourceUrl            = 'https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json'
     IpaFallbackUrl       = 'https://github.com/DavThosty/Whoop-plus/releases/tag/ios-latest'
-    RefreshHelpUrl       = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/IOS.md#4-alle-7-tage-verl%C3%A4ngern'
+    RefreshHelpUrl       = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/ANLEITUNG.md#4-nie-mehr-dran-denken-automatisch-verl%C3%A4ngern'
+    GuideUrl             = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/ANLEITUNG.md'
     ITunesDownloadUrl    = 'https://www.apple.com/itunes/download/win64'
     AppleDevicesStoreUrl = 'https://apps.microsoft.com/detail/9np83lwlpz9k'
     ITunesWingetId       = 'Apple.iTunes'
@@ -214,9 +215,11 @@ function Get-WindowsSupport {
 
 function Get-AppleInstallMethods {
     # Reihenfolge der Installationswege für das Apple-Programm (Apple Mobile Device Support).
+    # Wie von SideStore empfohlen: iTunes von Apple zuerst, die App „Apple-Geräte“ nur als Ersatz.
+    # $IsWindows11 bleibt als Parameter, falls sich die Empfehlung je nach Windows-Version ändert.
     param([bool]$IsWindows11, [bool]$WingetAvailable)
+    $null = $IsWindows11
     if (-not $WingetAvailable) { return @('Manual') }
-    if ($IsWindows11) { return @('AppleDevicesStore', 'ITunesWinget', 'Manual') }
     return @('ITunesWinget', 'AppleDevicesStore', 'Manual')
 }
 
@@ -592,7 +595,7 @@ function Get-ScreenDefinition {
         }
         'AddSource' {
             $d.Title = 'Whoop Plus hinzufügen'; $d.Icon = 'step-add'; $d.OnEnter = 'CopySourceSilent'
-            $d.Body = "1. Scanne den Code mit der **Kamera** und tippe auf **In `„SideStore`“ öffnen**.`n2. Tippe auf **ADD** und dann auf **Add Source**.`n3. Tippe bei Whoop Plus auf **FREE**."
+            $d.Body = "1. Scanne den Code mit der **Kamera** und tippe auf **In `„SideStore`“ öffnen**.`n2. Tippe auf **ADD** und dann auf **Add Source**.`n3. Tippe bei Whoop Plus auf **FREE** (bzw. **Install**)."
             $d.Qr = 'qr-source'
             $d.QrCaption = 'Ohne Kamera: In SideStore **Sources** → **+** und diese Adresse eingeben:'
             $d.Note = $script:Config.SourceUrl
@@ -608,15 +611,15 @@ function Get-ScreenDefinition {
             else {
                 $d.Body = 'Whoop Plus ist jetzt auf deinem iPhone.'
             }
-            $d.Note = 'Wichtig: Einmal pro Woche **LocalDevVPN** → **Connect**, dann in SideStore **My Apps** → **Refresh All** tippen.'
-            $d.Links = @(@{ Text = 'Mehr zum Verlängern'; Action = 'OpenUrl:' + $script:Config.RefreshHelpUrl })
+            $d.Note = 'Letzter Tipp: Richte am iPhone das **automatische Verlängern** ein (Kurzbefehl, 5 Minuten). Dann musst du nie mehr daran denken.'
+            $d.Links = @(@{ Text = 'Anleitung: automatisch verlängern'; Action = 'OpenUrl:' + $script:Config.RefreshHelpUrl })
             $d.Primary = 'Schließen'; $d.PrimaryAction = 'Quit'
         }
         'CheckDone' {
             $d.Title = 'Alles in Ordnung'; $d.Icon = 'step-done'; $d.OnEnter = 'MarkCompleted'
             $d.Body = 'Dein PC ist bereit. Du musst nichts tun.'
-            $d.Note = 'Denk daran: Einmal pro Woche **LocalDevVPN** → **Connect**, dann in SideStore **Refresh All** tippen.'
-            $d.Links = @(@{ Text = 'Mehr zum Verlängern'; Action = 'OpenUrl:' + $script:Config.RefreshHelpUrl })
+            $d.Note = 'Tipp: Mit dem Kurzbefehl verlängert das iPhone SideStore und Whoop Plus jede Nacht von selbst.'
+            $d.Links = @(@{ Text = 'Anleitung: automatisch verlängern'; Action = 'OpenUrl:' + $script:Config.RefreshHelpUrl })
             $d.Primary = 'Schließen'; $d.PrimaryAction = 'Quit'
         }
         'PairingDelete' {
