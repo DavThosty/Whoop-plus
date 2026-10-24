@@ -33,11 +33,18 @@ export function Band() {
             </div>
             {s.battery && <BatteryBadge percent={s.battery.percent} charging={s.battery.charging} />}
           </div>
-          {s.error && <div class="note err" style={{ marginBottom: 10 }}>{s.error}</div>}
-          {!connected ? (
-            <button class="btn primary" disabled={s.conn === 'connecting'} onClick={() => app.connect()}>
-              {s.conn === 'connecting' ? 'Verbinde …' : 'Band verbinden'}
-            </button>
+          {s.error && (
+            <div class="note err" style={{ marginBottom: 10 }} onClick={() => app.clearError()}>
+              {s.error} <span class="muted small">(tippen zum Schließen)</span>
+            </div>
+          )}
+          {s.conn === 'connecting' ? (
+            <div class="btns two">
+              <button class="btn primary" disabled>Verbinde …</button>
+              <button class="btn" onClick={() => app.disconnect()}>Abbrechen</button>
+            </div>
+          ) : !connected ? (
+            <button class="btn primary" onClick={() => app.connect()}>Band verbinden</button>
           ) : (
             <div class="btns two">
               <button class="btn blue" disabled={s.conn === 'syncing'} onClick={() => app.syncNow()}>
@@ -99,6 +106,26 @@ export function Band() {
         </div>
         <div class="small muted" style={{ marginTop: 10 }}>
           Alles bleibt lokal auf diesem iPhone. Das Band speichert ungefähr 14 Tage – synchronisiere also spätestens alle paar Tage.
+          {s.storage && <> Belegt: {(s.storage.usage / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 0 })} MB.</>}
+        </div>
+        {s.storage && s.storage.persisted !== true && (
+          <div class="note warn" style={{ marginTop: 10 }}>
+            Der Browser garantiert keine dauerhafte Speicherung. Exportiere regelmäßig eine Sicherung.
+          </div>
+        )}
+        <div class="btns two" style={{ marginTop: 10 }}>
+          <button class="btn" onClick={() => app.exportData()}>Sicherung exportieren</button>
+          <label class="btn" style={{ cursor: 'pointer' }}>
+            Sicherung einspielen
+            <input
+              type="file" accept="application/json,.json" style={{ display: 'none' }}
+              onChange={(e) => {
+                const f = (e.target as HTMLInputElement).files?.[0];
+                if (f) void app.importData(f);
+                (e.target as HTMLInputElement).value = '';
+              }}
+            />
+          </label>
         </div>
       </Card>
 

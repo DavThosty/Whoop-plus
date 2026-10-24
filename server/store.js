@@ -132,6 +132,11 @@ export class AuthStore {
     return this.refresh().generation;
   }
 
+  /** Random per auth.json and per reset; sessions and pairing tokens are bound to it. */
+  get userId() {
+    return this.refresh().userId;
+  }
+
   get credentials() {
     return this.refresh().credentials;
   }

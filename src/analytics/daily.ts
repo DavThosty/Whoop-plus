@@ -89,7 +89,10 @@ export function computeDayDetailed(
   const rhrSource = sleep?.restingHr ? 'tonight' : prevRhr ? 'previous' : 'default';
 
   const dayEpochs = buildEpochs(sliceSamples(sorted, db.start, db.end), db.start, db.end);
-  const act = activityStats(dayEpochs, sleep, profile, rhrUsed, (db.end - db.start) / 60);
+  // Für den laufenden Tag zählt der Grundumsatz nur bis jetzt, nicht für 24 Stunden.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const countedEnd = Math.min(db.end, Math.max(db.start, nowSec));
+  const act = activityStats(dayEpochs, sleep, profile, rhrUsed, (countedEnd - db.start) / 60);
 
   const recovery = computeRecovery(
     { hrv: sleep?.hrvRmssd ?? null, rhr: sleep?.restingHr ?? null, sleepPerformance },

@@ -22,8 +22,26 @@ const TITLES: Record<Tab, string> = { heute: 'Übersicht', schlaf: 'Schlaf', tre
 
 export function App() {
   const s = useApp();
-  const [tab, setTab] = useState<Tab>(() => (location.hash.slice(1) as Tab) || 'heute');
+  const [initialHash] = useState(() => location.hash.slice(1));
+  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === initialHash) ? (initialHash as Tab) : 'heute'));
   const [date, setDate] = useState(today());
+  const [followToday, setFollowToday] = useState(true);
+  const changeDate = (d: string) => {
+    setDate(d);
+    setFollowToday(d === today());
+  };
+
+  // Bleibt die App über Mitternacht offen, springt „Heute“ auf den neuen Tag.
+  useEffect(() => {
+    if (!followToday) return;
+    const tick = () => setDate((d) => (d === today() ? d : today()));
+    const id = setInterval(tick, 60_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [followToday]);
 
   useEffect(() => {
     void app.init();
@@ -36,7 +54,7 @@ export function App() {
 
   // Ohne Profil zuerst ins Profil; ohne Verbindung und ohne Daten zum Band.
   useEffect(() => {
-    if (location.hash) return;
+    if (initialHash) return;
     if (s.stats && s.stats.count === 0 && !s.demo) setTab(s.profile ? 'band' : 'profil');
   }, [s.stats?.count, s.profile]);
 
@@ -52,8 +70,8 @@ export function App() {
         </button>
       </header>
 
-      {tab === 'heute' && <Today date={date} setDate={setDate} goTo={goTo} />}
-      {tab === 'schlaf' && <Sleep date={date} setDate={setDate} />}
+      {tab === 'heute' && <Today date={date} setDate={changeDate} goTo={goTo} />}
+      {tab === 'schlaf' && <Sleep date={date} setDate={changeDate} />}
       {tab === 'trends' && <Trends />}
       {tab === 'band' && <Band />}
       {tab === 'profil' && <ProfilePage />}

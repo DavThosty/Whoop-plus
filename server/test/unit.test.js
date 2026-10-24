@@ -13,16 +13,20 @@ import { tmpDir } from './helpers.js';
 
 const secret = Buffer.alloc(32, 1);
 
-test('session tokens round-trip and enforce expiry and generation', () => {
+test('session tokens round-trip and enforce expiry, generation and userId', () => {
   const now = 1_700_000_000_000;
-  const { token, payload } = signSession(secret, { generation: 3, now, ttlMs: 1000, via: 'pair' });
-  assert.deepEqual(verifySession(secret, token, { generation: 3, now: now + 999 }), payload);
-  assert.equal(verifySession(secret, token, { generation: 3, now: now + 1000 }), null);
-  assert.equal(verifySession(secret, token, { generation: 4, now }), null);
-  assert.equal(verifySession(Buffer.alloc(32, 2), token, { generation: 3, now }), null);
-  assert.equal(verifySession(secret, `${token}x`, { generation: 3, now }), null);
-  assert.equal(verifySession(secret, undefined, { generation: 3, now }), null);
-  assert.equal(verifySession(secret, 'a.b.c', { generation: 3, now }), null);
+  const { token, payload } = signSession(secret, { generation: 3, userId: 'U1', now, ttlMs: 1000, via: 'pair' });
+  const ok = { generation: 3, userId: 'U1' };
+  assert.deepEqual(verifySession(secret, token, { ...ok, now: now + 999 }), payload);
+  assert.equal(payload.u, 'U1');
+  assert.equal(verifySession(secret, token, { ...ok, now: now + 1000 }), null);
+  assert.equal(verifySession(secret, token, { ...ok, generation: 4, now }), null);
+  assert.equal(verifySession(secret, token, { ...ok, userId: 'U2', now }), null);
+  assert.equal(verifySession(secret, token, { ...ok, userId: '', now }), null);
+  assert.equal(verifySession(Buffer.alloc(32, 2), token, { ...ok, now }), null);
+  assert.equal(verifySession(secret, `${token}x`, { ...ok, now }), null);
+  assert.equal(verifySession(secret, undefined, { ...ok, now }), null);
+  assert.equal(verifySession(secret, 'a.b.c', { ...ok, now }), null);
 });
 
 test('cookie helpers', () => {

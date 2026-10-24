@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
  * @typedef {object} SessionPayload
  * @property {number} v     format version
  * @property {number} g     auth generation at issue time
+ * @property {string} u     store userId at issue time (random per auth.json / reset)
  * @property {number} iat   issued at (ms since epoch)
  * @property {number} exp   expiry (ms since epoch)
  * @property {string} sid   random session id
@@ -22,14 +23,15 @@ function mac(secret, data) {
 /**
  * Create an HMAC-signed session token: base64url(json).base64url(hmac)
  * @param {Buffer} secret
- * @param {{ generation: number, now: number, ttlMs: number, via: string }} opts
+ * @param {{ generation: number, userId: string, now: number, ttlMs: number, via: string }} opts
  * @returns {{ token: string, payload: SessionPayload }}
  */
-export function signSession(secret, { generation, now, ttlMs, via }) {
+export function signSession(secret, { generation, userId, now, ttlMs, via }) {
   /** @type {SessionPayload} */
   const payload = {
     v: 1,
     g: generation,
+    u: userId,
     iat: now,
     exp: now + ttlMs,
     sid: crypto.randomBytes(12).toString('base64url'),
@@ -43,10 +45,10 @@ export function signSession(secret, { generation, now, ttlMs, via }) {
  * Verify a session token. Returns the payload or null.
  * @param {Buffer} secret
  * @param {string|undefined} token
- * @param {{ generation: number, now: number }} opts
+ * @param {{ generation: number, userId: string, now: number }} opts
  * @returns {SessionPayload|null}
  */
-export function verifySession(secret, token, { generation, now }) {
+export function verifySession(secret, token, { generation, userId, now }) {
   if (typeof token !== 'string' || token.length > 1024) return null;
   const dot = token.indexOf('.');
   if (dot <= 0 || dot !== token.lastIndexOf('.')) return null;
@@ -70,6 +72,8 @@ export function verifySession(secret, token, { generation, now }) {
   if (typeof payload.exp !== 'number' || payload.exp <= now) return null;
   if (typeof payload.iat !== 'number' || payload.iat > now + 60_000) return null;
   if (payload.g !== generation) return null;
+  // Binds the token to this exact auth.json: a deleted/recreated file (generation back to 1) must not revive old sessions.
+  if (typeof payload.u !== 'string' || !userId || payload.u !== userId) return null;
   return payload;
 }
 

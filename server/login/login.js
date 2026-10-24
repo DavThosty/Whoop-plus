@@ -92,8 +92,15 @@
           location.replace('/');
           return;
         }
-        show('view-pair');
-        showPlanB(false);
+        if (status.sessionVia === 'passkey') {
+          show('view-pair');
+          showPlanB(false);
+          return;
+        }
+        // Signed in via pairing link: creating new pairing links requires a passkey login.
+        show('view-login');
+        notice('Kopplungs-Links kannst du nur nach einer Anmeldung mit dem Passkey erstellen (in Safari).');
+        showPlanB(!webauthnOk || hasBluetooth);
         return;
       }
       show(status.registered ? 'view-login' : 'view-setup');
@@ -157,6 +164,7 @@
       })
       .catch(function (err) {
         notice(describe(err));
+        if (err.code === 'pairing_requires_passkey') show('view-login');
         if (err.code === 'unauthenticated') init();
       })
       .then(function () { busy(btn, false); });

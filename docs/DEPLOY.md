@@ -58,11 +58,18 @@ Der Container muss im selben Docker-Netzwerk wie NPM hängen.
   Häufig ist das `npm_default` oder `nginx-proxy-manager_default`.
 - Alternativ per SSH: `docker inspect -f '{{json .NetworkSettings.Networks}}' <npm-container>`
 
-Steht dort nur `bridge`, legst du ein eigenes Netzwerk an:
+**Empfehlung: ein eigenes Netzwerk nur für NPM und whoop-plus.** Der Server vertraut dem
+`X-Forwarded-For`-Header des direkt vorgeschalteten Proxys (`TRUST_PROXY=1`). Er nutzt die IP für die
+Begrenzung von Fehlversuchen. Hängt whoop-plus im allgemeinen NPM-Netzwerk, können auch andere
+Container dort Anfragen mit gefälschter IP schicken und so die Begrenzung umgehen. Deshalb:
 
-1. Portainer → **Networks** → **Add network**, Name `proxy`, Driver `bridge` → **Create**.
-2. NPM-Container öffnen → **Connected networks** → *Join a network* → `proxy` → **Join network**.
-3. Im nächsten Schritt `PROXY_NETWORK=proxy` setzen.
+1. Portainer → **Networks** → **Add network**, Name `whoop-proxy`, Driver `bridge` → **Create**.
+2. NPM-Container öffnen → **Connected networks** → *Join a network* → `whoop-proxy` → **Join network**.
+   NPM bleibt zusätzlich in seinen bisherigen Netzwerken, andere Proxy Hosts laufen also weiter.
+3. Im nächsten Schritt `PROXY_NETWORK=whoop-proxy` setzen. Sonst hängt niemand in diesem Netzwerk.
+
+Das ist auch der Weg, wenn NPM nur im Netzwerk `bridge` hängt (dort geht keine Namensauflösung).
+Willst du es einfacher, geht auch das vorhandene NPM-Netzwerk (z. B. `npm_default`).
 
 ### 3b. Stack erstellen
 
@@ -82,7 +89,7 @@ Unter **Environment variables** → *Add an environment variable*:
 
 | Variable | Wert | Pflicht? |
 |----------|------|----------|
-| `PROXY_NETWORK` | Netzwerkname aus 3a, z. B. `npm_default` | **ja**, falls nicht `npm_default` |
+| `PROXY_NETWORK` | Netzwerkname aus 3a, empfohlen `whoop-proxy` | **ja**, falls nicht `npm_default` |
 | `RP_ID` | `whoop.steiner-kn.de` | nein (Standard) |
 | `ORIGIN` | `https://whoop.steiner-kn.de` | nein (Standard) |
 | `SESSION_DAYS` | `30` | nein (Standard) |
@@ -160,6 +167,9 @@ Gut zu wissen:
 - Läuft die Sitzung in Bluefy ab, zeigt Bluefy die Anmeldeseite mit einem Hinweis.
   Dann meldest du dich in Safari mit dem Passkey an, erzeugst einen neuen Link und fügst ihn in Bluefy ein.
 - Die Kopplungsseite erreichst du in Safari jederzeit über `https://whoop.steiner-kn.de/login`.
+- Kopplungs-Links lassen sich **nur nach einer Anmeldung mit dem Passkey** erstellen. Eine Sitzung,
+  die selbst über einen Kopplungs-Link entstanden ist (Bluefy), kann keine neuen Links erzeugen.
+  So kann ein gestohlenes Bluefy-Cookie sich nicht endlos verlängern.
 - **Achtung:** Die Messdaten liegen nur in Bluefy (IndexedDB). Löschst du die Website-Daten von Bluefy
   oder Bluefy selbst, sind die Daten weg. Nutze den Export der App, falls vorhanden.
 
@@ -220,7 +230,8 @@ Dann deployt Portainer jeden Push auf `main` automatisch.
 | Passkey: *„Sicherheitsfehler“*, *„The operation is insecure“*, Verifikation fehlgeschlagen | `RP_ID` bzw. `ORIGIN` passen nicht zur aufgerufenen Adresse. Es muss genau `RP_ID=whoop.steiner-kn.de` und `ORIGIN=https://whoop.steiner-kn.de` sein (ohne `/` am Ende) und die Seite muss über diese Adresse per HTTPS geöffnet werden. |
 | Passkey-Dialog erscheint in Bluefy nicht oder bricht ab | Normal. Bluefy darf auf iOS meist keine Passkeys nutzen. Nimm den Kopplungs-Link (Schritt 6). |
 | *„Setup-Code ist falsch“* | Den aktuellen Code aus dem Log nehmen. Er ändert sich bei jedem Neustart, solange nichts registriert ist. Nach 5 Fehlversuchen 15 Minuten warten. |
-| Nach erfolgreicher Anmeldung wieder auf `/login` (Login-Schleife), Cookie wird nicht gesetzt | Das Cookie ist `Secure` und braucht HTTPS. In NPM muss *Force SSL* an sein, und die Seite muss über `https://` aufgerufen werden. `TRUST_PROXY` muss auf `1` stehen (Standard). Prüfe auch, dass kein weiterer Proxy (z. B. Cloudflare) davor hängt. Sonst `TRUST_PROXY=2`. |
+| Nach erfolgreicher Anmeldung wieder auf `/login` (Login-Schleife), Cookie wird nicht gesetzt | Das Sitzungs-Cookie ist `Secure` (Präfix `__Host-`) und wird nur über HTTPS gespeichert. In NPM muss *Force SSL* an sein, die Seite muss über `https://whoop.steiner-kn.de` aufgerufen werden (nicht über IP oder `http://`), und `COOKIE_SECURE` darf nicht gesetzt sein. Hilft das nicht: In Safari *Einstellungen → Safari → Erweitert → Website-Daten* die Daten von `whoop.steiner-kn.de` löschen und neu anmelden. (`TRUST_PROXY` hat damit nichts zu tun. Es bestimmt nur, welche Client-IP für die Begrenzung von Fehlversuchen gilt.) |
+| Alle Nutzer teilen sich die Fehlversuchs-Sperre bzw. *„Zu viele Anfragen“* kommt sofort | `TRUST_PROXY` passt nicht zur Proxy-Kette: Bei genau einem Proxy (NPM) muss es `1` sein, mit einem weiteren Proxy davor (z. B. Cloudflare) `2`. |
 | *„Kopplungs-Link ist ungültig“* | Der Link ist älter als 10 Minuten, wurde schon benutzt, oder seitdem wurde zurückgesetzt. Erzeuge in Safari einen neuen Link. |
 | *„App ist nicht gebaut (index.html fehlt)“* | Das Frontend fehlt im Image. Der Build ist unvollständig. Neu deployen und die Build-Ausgabe prüfen. |
 | *„Zu viele Anfragen“* | Es gibt einen Schutz gegen Durchprobieren (60 Auth-Anfragen pro Minute und IP). Kurz warten. |
@@ -239,8 +250,8 @@ Dann deployt Portainer jeden Push auf `main` automatisch.
 | `SESSION_DAYS` | `30` | Gültigkeit einer Sitzung in Tagen |
 | `SETUP_CODE` | zufällig | Fester Setup-Code für die Ersteinrichtung |
 | `RESET_AUTH` | leer | `1`: beim Start alles zurücksetzen (danach wieder entfernen!) |
-| `TRUST_PROXY` | `1` | Anzahl vertrauenswürdiger Proxys davor (Express `trust proxy`) |
-| `PROXY_NETWORK` | `npm_default` | Nur Compose: Name des NPM-Netzwerks |
+| `TRUST_PROXY` | `1` | Anzahl vertrauenswürdiger Proxys davor (Express `trust proxy`). Bestimmt nur die Client-IP für die Begrenzung von Fehlversuchen. |
+| `PROXY_NETWORK` | `npm_default` | Nur Compose: Docker-Netzwerk, das whoop-plus mit NPM teilt (empfohlen: eigenes Netzwerk `whoop-proxy`) |
 | `SESSION_SECRET` | automatisch | Optional, mindestens 32 Zeichen. Sonst wird ein Schlüssel in `DATA_DIR/session.key` erzeugt. |
 
 ### Lokal testen (Entwicklung)

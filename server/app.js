@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const PAIR_TTL_MS = 10 * 60 * 1000;
+export const MAX_CHALLENGES = 1000;
 export const CHALLENGE_COOKIE = 'wp_chal';
 const LOGIN_DIR = path.join(SERVER_DIR, 'login');
 
@@ -110,12 +111,11 @@ export function createApp(deps) {
 
   /** @type {Map<string, { challenge: string, kind: 'register'|'login', expiresAt: number }>} */
   const challenges = new Map();
-  /** @type {Map<string, { expiresAt: number, generation: number }>} hashed pairing tokens */
+  /** @type {Map<string, { expiresAt: number, generation: number, userId: string }>} hashed pairing tokens */
   const pairings = new Map();
 
   const authLimiter = new RateLimiter({ limit: 60, windowMs: 60_000, now });
   const setupFailIp = new RateLimiter({ limit: 5, windowMs: 15 * 60_000, now });
-  const setupFailGlobal = new RateLimiter({ limit: 30, windowMs: 60 * 60_000, now });
   const pairFailIp = new RateLimiter({ limit: 10, windowMs: 15 * 60_000, now });
 
   const sweep = () => {
@@ -133,7 +133,7 @@ export function createApp(deps) {
   /** @param {import('express').Request} req */
   const getSession = (req) => {
     const token = parseCookies(req.headers.cookie)[sessionCookie];
-    return verifySession(sessionSecret, token, { generation: store.generation, now: now() });
+    return verifySession(sessionSecret, token, { generation: store.generation, userId: store.userId, now: now() });
   };
 
   /**
@@ -143,6 +143,7 @@ export function createApp(deps) {
   const issueSession = (res, via) => {
     const { token, payload } = signSession(sessionSecret, {
       generation: store.generation,
+      userId: store.userId,
       now: now(),
       ttlMs: sessionTtlMs,
       via,
@@ -162,7 +163,12 @@ export function createApp(deps) {
    */
   const storeChallenge = (res, challenge, kind) => {
     sweep();
-    if (challenges.size > 1000) challenges.clear();
+    // Evict the oldest entries (Map keeps insertion order) instead of dropping everything.
+    while (challenges.size >= MAX_CHALLENGES) {
+      const oldest = challenges.keys().next().value;
+      if (oldest === undefined) break;
+      challenges.delete(oldest);
+    }
     const id = crypto.randomBytes(24).toString('base64url');
     challenges.set(id, { challenge, kind, expiresAt: now() + CHALLENGE_TTL_MS });
     res.append('Set-Cookie', serializeCookie(CHALLENGE_COOKIE, id, {
@@ -260,7 +266,7 @@ export function createApp(deps) {
       registered: store.registered,
       authenticated: Boolean(session),
       webauthn: true,
-      ...(session ? { sessionExpiresAt: new Date(session.exp).toISOString() } : {}),
+      ...(session ? { sessionExpiresAt: new Date(session.exp).toISOString(), sessionVia: session.via } : {}),
     });
   });
 
@@ -269,14 +275,14 @@ export function createApp(deps) {
       return fail(res, 403, 'registration_closed', 'Die Registrierung ist geschlossen. Bitte mit dem Passkey anmelden.');
     }
     const ip = req.ip || 'unknown';
-    const blockedFor = setupFailIp.blocked(ip) ?? setupFailGlobal.blocked('global');
+    // Per-IP only: a global limiter would let anyone lock the owner out of the first setup.
+    const blockedFor = setupFailIp.blocked(ip);
     if (blockedFor !== null) {
       res.set('Retry-After', String(blockedFor));
       return fail(res, 429, 'setup_rate_limited', 'Zu viele falsche Setup-Codes. Bitte später erneut versuchen.');
     }
     if (!setup.check(req.body?.setupCode)) {
       setupFailIp.hit(ip);
-      setupFailGlobal.hit('global');
       logger.warn(`[auth] Falscher Setup-Code von ${ip}`);
       return fail(res, 403, 'invalid_setup_code', 'Der Setup-Code ist falsch. Du findest ihn im Container-Log.');
     }
@@ -324,6 +330,10 @@ export function createApp(deps) {
     }
     const info = verification.registrationInfo;
     const { credential } = info;
+    // Re-check after the await: two concurrent verify requests must not both register.
+    if (store.registered) {
+      return fail(res, 403, 'registration_closed', 'Die Registrierung ist geschlossen.');
+    }
     store.addCredential({
       id: credential.id,
       publicKey: Buffer.from(credential.publicKey).toString('base64url'),
@@ -396,13 +406,18 @@ export function createApp(deps) {
   });
 
   app.post('/api/auth/pair', requireSession, (req, res) => {
+    // Only a passkey login may mint pairing links; otherwise a stolen paired cookie could renew itself forever.
+    if (res.locals.session.via !== 'passkey') {
+      return fail(res, 403, 'pairing_requires_passkey',
+        'Kopplungs-Links können nur nach einer Anmeldung mit dem Passkey (in Safari) erstellt werden.');
+    }
     sweep();
     if (pairings.size >= 20) {
       return fail(res, 429, 'too_many_pairings', 'Zu viele offene Kopplungs-Links. Bitte 10 Minuten warten.');
     }
     const token = crypto.randomBytes(32).toString('base64url');
     const expiresAt = now() + PAIR_TTL_MS;
-    pairings.set(sha256(token), { expiresAt, generation: store.generation });
+    pairings.set(sha256(token), { expiresAt, generation: store.generation, userId: store.userId });
     logger.info(`[auth] Kopplungs-Link erstellt, gültig bis ${new Date(expiresAt).toISOString()}.`);
     res.json({ url: `${config.origin}/pair/${token}`, expiresAt: new Date(expiresAt).toISOString() });
   });
@@ -426,7 +441,7 @@ export function createApp(deps) {
     const key = sha256(String(req.params.token));
     const entry = pairings.get(key);
     pairings.delete(key); // single use, even if expired
-    if (!entry || entry.expiresAt <= now() || entry.generation !== store.generation) {
+    if (!entry || entry.expiresAt <= now() || entry.generation !== store.generation || entry.userId !== store.userId) {
       pairFailIp.hit(ip);
       logger.warn(`[auth] Ungültiger oder abgelaufener Kopplungs-Link von ${ip}`);
       return res.redirect(302, '/login?pair=invalid');

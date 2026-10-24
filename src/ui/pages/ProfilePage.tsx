@@ -59,7 +59,7 @@ export function ProfilePage() {
           Der Maximalpuls bestimmt die Pulszonen und damit den Strain. Kennst du deinen echten Maximalpuls (z. B. aus einem Belastungstest), trag ihn ein – das ist genauer als 220 − Alter.
         </div>
         <div style={{ marginTop: 12 }}>
-          <button class="btn primary" disabled={!valid} onClick={async () => { await app.saveProfile(p); setSaved(true); }}>
+          <button class="btn primary" disabled={!valid || s.computing} onClick={async () => { await app.saveProfile(p); setSaved(true); }}>
             {saved ? 'Gespeichert ✓' : 'Speichern & neu berechnen'}
           </button>
         </div>

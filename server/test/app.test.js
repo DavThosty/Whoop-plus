@@ -127,16 +127,17 @@ describe('access control', () => {
 
     const day = 24 * 3600 * 1000;
     const expired = signSession(t.sessionSecret, {
-      generation: t.store.generation, now: t.clock.t - 31 * day, ttlMs: 30 * day, via: 'passkey',
+      generation: t.store.generation, userId: t.store.userId, now: t.clock.t - 31 * day, ttlMs: 30 * day, via: 'passkey',
     }).token;
     assert.equal((await req(`${t.base}/`, { cookie: `${SESSION}=${expired}`, headers: HTML })).status, 302);
 
     const forged = signSession(Buffer.alloc(32, 7), {
-      generation: t.store.generation, now: t.clock.t, ttlMs: day, via: 'passkey',
+      generation: t.store.generation, userId: t.store.userId, now: t.clock.t, ttlMs: day, via: 'passkey',
     }).token;
     assert.equal((await req(`${t.base}/`, { cookie: `${SESSION}=${forged}`, headers: HTML })).status, 302);
 
-    const valid = signSession(t.sessionSecret, { generation: t.store.generation, now: t.clock.t, ttlMs: day, via: 'passkey' }).token;
+    const valid = signSession(t.sessionSecret, { generation: t.store.generation, userId: t.store.userId, now: t.clock.t, ttlMs: day, via: 'passkey' }).token;
+    assert.equal((await req(`${t.base}/`, { cookie: `${SESSION}=${valid}`, headers: HTML })).status, 200, 'control token accepted');
     const [body, sig] = valid.split('.');
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
     payload.exp += 365 * day;
@@ -145,7 +146,7 @@ describe('access control', () => {
     assert.equal((await req(`${t.base}/`, { cookie: `${SESSION}=garbage`, headers: HTML })).status, 302);
 
     const oldGen = signSession(t.sessionSecret, {
-      generation: t.store.generation - 1, now: t.clock.t, ttlMs: day, via: 'passkey',
+      generation: t.store.generation - 1, userId: t.store.userId, now: t.clock.t, ttlMs: day, via: 'passkey',
     }).token;
     assert.equal((await req(`${t.base}/`, { cookie: `${SESSION}=${oldGen}`, headers: HTML })).status, 302);
 
