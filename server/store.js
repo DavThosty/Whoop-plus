@@ -90,8 +90,10 @@ export class AuthStore {
     try {
       const st = fs.statSync(this.file);
       return `${st.ino}:${st.size}:${st.mtimeMs}`;
-    } catch {
-      return 'missing';
+    } catch (err) {
+      // Only a truly missing file may be (re)created – never overwrite on EACCES etc.
+      if (/** @type {NodeJS.ErrnoException} */ (err).code === 'ENOENT') return 'missing';
+      throw err;
     }
   }
 

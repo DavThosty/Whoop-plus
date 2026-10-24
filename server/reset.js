@@ -11,8 +11,19 @@ import { loadConfig } from './config.js';
 import { AuthStore } from './store.js';
 
 const config = loadConfig();
-const store = new AuthStore(config.dataDir);
-const { removed, generation } = store.reset();
+/** @type {{ removed: number, generation: number }} */
+let result;
+try {
+  result = new AuthStore(config.dataDir).reset();
+} catch (err) {
+  const code = /** @type {NodeJS.ErrnoException} */ (err).code;
+  console.error(`Zurücksetzen fehlgeschlagen: ${/** @type {Error} */ (err).message}`);
+  if (code === 'EACCES' || code === 'EPERM') {
+    console.error('Bitte als Benutzer "node" ausführen, z. B.:  docker exec -u node whoop-plus node server/reset.js');
+  }
+  process.exit(1);
+}
+const { removed, generation } = result;
 
 console.log([
   '',
