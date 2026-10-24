@@ -504,6 +504,9 @@ Describe 'Signaturprüfung (minisign wie der iloader-Updater)' {
         $sig2[63] = $sig2[63] -bxor 1
         [WhoopPlusSetup.Ed25519]::Verify($pk2, [byte[]]@(0x72), $sig2) | Should -BeFalse
     }
+    It 'Testdaten sind byte-genau ausgecheckt (kein CRLF, siehe fixtures/.gitattributes)' {
+        [System.IO.File]::ReadAllBytes($script:SamplePath) | Should -Not -Contain ([byte]13)
+    }
     It 'gültige Signatur -> Valid' {
         Test-MinisignSignature -Path $script:SamplePath -SignatureBase64 $script:SampleSig -PublicKey $script:SamplePub | Should -Be 'Valid'
     }
