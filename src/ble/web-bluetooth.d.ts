@@ -18,7 +18,7 @@ interface RequestDeviceOptions {
 
 interface Bluetooth {
   requestDevice(options: RequestDeviceOptions): Promise<BluetoothDevice>;
-  /** Nicht überall vorhanden (z. B. Bluefy/Safari) – vor Nutzung prüfen. */
+  /** Nicht überall vorhanden (z. B. in manchen Browsern) – vor Nutzung prüfen. */
   getDevices?(): Promise<BluetoothDevice[]>;
   getAvailability?(): Promise<boolean>;
 }

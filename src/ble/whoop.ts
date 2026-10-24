@@ -1,4 +1,4 @@
-// WHOOP 4.0 über Web Bluetooth (Bluefy auf dem iPhone).
+// WHOOP 4.0 über die Web-Bluetooth-API (nativ über src/ble/capacitor-bluetooth.ts, im Browser über navigator.bluetooth).
 // Ohne DOM-/UI-Abhängigkeiten, damit es unter vitest gegen den Simulator (src/sim) läuft.
 
 import type { ConnectionState, DeviceInfo, LiveHr, SampleRecord, SyncProgress } from '../types';
@@ -247,7 +247,7 @@ export class WhoopDevice {
     if (this._state === 'connected' || this._state === 'syncing') return;
     if (this._state === 'connecting') throw new Error('Verbindung wird bereits aufgebaut');
     const bt = this.bt;
-    if (!bt) throw new Error('Web Bluetooth wird von diesem Browser nicht unterstützt (Bluefy verwenden)');
+    if (!bt) throw new Error('Kein Bluetooth verfügbar (im Browser wird Web Bluetooth benötigt)');
     this.setState('connecting');
     const gen = this.gen;
     let device: BluetoothDevice;
@@ -271,12 +271,16 @@ export class WhoopDevice {
     if (this._state === 'connecting') return false;
     const bt = this.bt;
     if (!bt || typeof bt.getDevices !== 'function') return false;
+    const gen = this.gen;
     let devices: BluetoothDevice[];
     try {
-      devices = await bt.getDevices();
+      // Auch dieser Schritt darf nicht ewig hängen (nativ: Bluetooth initialisieren + Gerät nachschlagen).
+      devices = await this.guard(bt.getDevices(), this.t.writeTimeoutMs, 'Gemerktes Band nicht abrufbar (Zeitüberschreitung)', null);
     } catch {
       return false;
     }
+    // Während des Wartens getrennt oder ersetzt? Dann nicht mehr verbinden.
+    if (gen !== this.gen) return false;
     const dev =
       devices.find((d) => d.id === this.lastDeviceId) ??
       devices.find((d) => d.name?.toUpperCase().startsWith('WHOOP')) ??
@@ -398,7 +402,7 @@ export class WhoopDevice {
   }
 
   /** Wartet auf `p`, höchstens `ms`, und bricht ab, sobald die Verbindung abgebaut wird. */
-  private guard<T>(p: Promise<T>, ms: number, timeoutMsg: string, signal = this.abort): Promise<T> {
+  private guard<T>(p: Promise<T>, ms: number, timeoutMsg: string, signal: { promise: Promise<never> } | null = this.abort): Promise<T> {
     p.catch(() => undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const racers: Promise<T>[] = [

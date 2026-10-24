@@ -28,7 +28,7 @@ function tabFromHash(h: string): Tab | null {
 export function App() {
   // Nur die Felder abonnieren, die der Rahmen braucht – Live-Puls und Workout-Takt rendern nur ihre eigenen Komponenten neu.
   const s = useSelect(app, (a) => ({
-    conn: a.conn, battery: a.battery?.percent ?? null, error: a.error, demo: a.demo, dataVersion: a.dataVersion,
+    conn: a.conn, battery: a.battery?.percent ?? null, error: a.error, demo: a.demo, dataVersion: a.dataVersion, outOfRange: a.outOfRange,
     postSync: a.postSync, computing: a.computing, statsLoaded: !!a.stats, statsCount: a.stats?.count ?? null,
   }));
   const f = useStore(flow);
@@ -123,7 +123,7 @@ export function App() {
           </div>
           <button class="pill" onClick={() => setTab('mehr')} aria-label="Verbindungsstatus">
             <span class={`dot ${s.conn === 'connected' ? 'on' : s.conn === 'disconnected' ? (s.error ? 'err' : '') : 'busy'}`} />
-            {statusText(s.conn, s.battery, busy, s.demo)}
+            {statusText(s.conn, s.battery, busy, s.demo, s.outOfRange)}
           </button>
         </header>
 
@@ -154,14 +154,14 @@ export function App() {
 }
 
 
-function statusText(conn: string, battery: number | null, busy: boolean, demo: boolean): string {
+function statusText(conn: string, battery: number | null, busy: boolean, demo: boolean, outOfRange: boolean): string {
   if (conn === 'connecting') return 'Verbinde …';
   if (conn === 'syncing') return 'Sync …';
   if (conn === 'connected') {
     if (busy) return 'Berechne …';
     return battery != null ? `${Math.round(battery)} %${demo ? ' · Demo' : ''}` : 'Verbunden';
   }
-  return 'Getrennt';
+  return outOfRange ? 'Nicht in Reichweite' : 'Getrennt';
 }
 
 /** Dünne Fortschrittslinie oben für unauffällige Syncs. */
@@ -208,7 +208,7 @@ function ConnectPrompt(props: { goTo: (t: Tab) => void }) {
           )
         ) : (
           <>
-            <div class="note warn">Dieser Browser kann kein Bluetooth. Öffne die App auf dem iPhone in <b>Bluefy</b>.</div>
+            <div class="note warn">Hier ist kein Bluetooth verfügbar. Whoop Plus ist als iPhone-App gedacht; im Desktop-Browser klappt die Verbindung nur mit Web Bluetooth (z. B. Chrome).</div>
             <button class="btn primary" onClick={() => app.startDemo()}>Demo starten</button>
           </>
         )}

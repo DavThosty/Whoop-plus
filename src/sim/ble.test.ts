@@ -209,6 +209,36 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     expect(await dev.syncHistory()).toBe(0);
   });
 
+  it('Verlauf bei eingeschaltetem Echtzeit-Puls: jeder Datensatz genau einmal, alle Acks korrekt', async () => {
+    const stored: SampleRecord[] = [];
+    const sink: RecordSink = async (records) => {
+      await sleep(15); // Commit dauert, während Echtzeitpakete weiterlaufen
+      stored.push(...records);
+    };
+    const { dev, strap, ev } = setup({ historySeconds: 1800, realtimeIntervalMs: 5 }, sink);
+    await dev.connect();
+    await dev.setRealtimeHr(true);
+    await until(() => ev.live.length >= 3);
+    const liveBefore = ev.live.length;
+    const n = await dev.syncHistory();
+    expect(n).toBe(1800);
+    expect(stored).toHaveLength(1800);
+    const ts = stored.map((r) => r.ts);
+    expect(new Set(ts).size).toBe(1800);
+    expect(Math.min(...ts)).toBe(START);
+    expect(Math.max(...ts)).toBe(START + 1799);
+    expect(stored.every((r) => r.src === 'history')).toBe(true);
+    // Echtzeitpakete kamen während des Syncs weiter an und landeten nicht im Verlauf.
+    expect(ev.live.length).toBeGreaterThan(liveBefore + 5);
+    expect(strap.realtimePacketsSent).toBeGreaterThan(10);
+    expect(strap.acks.map((a) => a.accepted)).toEqual([true, true, true]);
+    expect(strap.batchesSent).toBe(3);
+    expect(strap.cursor).toBe(1800);
+    expect(ev.errors).toEqual([]);
+    assertSafe(strap);
+    expect(await dev.syncHistory()).toBe(0);
+  });
+
   it('Sink-Fehler → kein Ack, Abbruch mit ABORT, nächster Sync setzt beim unbestätigten Block fort', async () => {
     let calls = 0;
     const stored: SampleRecord[] = [];

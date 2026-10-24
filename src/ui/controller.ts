@@ -1,11 +1,13 @@
 // Zentrale App-Logik: verbindet Band (BLE), lokalen Speicher und Auswertung.
 import { dayBounds, localDateString, sleepWindow } from '../analytics';
+import { isNativeApp, platformBluetooth } from '../ble/platform';
 import { WhoopDevice } from '../ble/whoop';
 import {
   exportBackup, getKv, getProfile, importBackup, onDbNotice, pruneSamples, putSamples, requestPersistence,
   sampleBounds, setKv, setProfile, storageEstimate,
 } from '../store/db';
 import { recomputeRange } from '../store/pipeline';
+import { shareFileNative } from '../store/share-file';
 import type { ConnectionState, DeviceInfo, LiveHr, Profile, SampleRecord, SyncProgress } from '../types';
 import { addDays, today } from './format';
 
@@ -33,6 +35,8 @@ export interface AppState {
   retentionDays: number;
   log: string[];
   error: string | null;
+  /** Der letzte automatische Verbindungsversuch hat das Band nicht erreicht (dezenter Status statt Fehlermeldung). */
+  outOfRange: boolean;
   stats: { oldest: number | null; newest: number | null; count: number } | null;
   storage: { usage: number; quota: number; persisted: boolean | null } | null;
 }
@@ -49,7 +53,7 @@ const RECONNECT_DELAYS_MS = [5_000, 15_000, 60_000];
 
 export class AppController {
   state: AppState = {
-    supported: WhoopDevice.isSupported(),
+    supported: WhoopDevice.isSupported(platformBluetooth()),
     demo: false,
     conn: 'disconnected',
     info: null,
@@ -68,6 +72,7 @@ export class AppController {
     retentionDays: 0,
     log: [],
     error: null,
+    outOfRange: false,
     stats: null,
     storage: null,
   };
@@ -88,6 +93,12 @@ export class AppController {
   private userDisconnected = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Laufender Verbindungsaufbau (Tipp oder automatisch) – nie zwei WhoopDevices gleichzeitig auf einem Band. */
+  private inflight: { p: Promise<void>; auto: boolean } | null = null;
+  /** Live-Puls für die aktuelle Verbindung vom Nutzer ausgeschaltet (sonst automatisch an). */
+  private liveOptOut = false;
+  /** Automatisches Einschalten nur einmal pro Verbindung („connected“ kommt auch nach jedem Sync wieder). */
+  private autoLiveTried = false;
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -153,18 +164,24 @@ export class AppController {
     else if (this.state.supported) void this.tryReconnect();
   }
 
-  private createDevice(bluetooth?: unknown): WhoopDevice {
+  /** `auto`: Fehler beim Aufbau nur protokollieren (automatische Versuche sollen nicht stören). */
+  private createDevice(bluetooth?: unknown, auto = false): WhoopDevice {
     // Alte Verbindung samt Listenern sauber abräumen.
     for (const off of this.deviceOff) off();
     this.deviceOff = [];
     this.device?.disconnect().catch(() => {});
 
+    const bt = bluetooth ?? platformBluetooth();
     const dev = new WhoopDevice({
       sink: (records) => this.storeHistory(records),
-      ...(bluetooth ? { bluetooth: bluetooth as never } : {}),
+      ...(bt ? { bluetooth: bt as never } : {}),
     });
+    let quiet = auto;
     this.deviceOff = [
-      dev.on('state', (conn) => this.onState(conn)),
+      dev.on('state', (conn) => {
+        if (conn === 'connected') quiet = false;
+        this.onState(conn);
+      }),
       dev.on('info', (info) => this.set({ info })),
       dev.on('battery', (battery) => this.set({ battery })),
       dev.on('live', (live) => this.onLive(live)),
@@ -173,7 +190,11 @@ export class AppController {
         if (sync.done) void this.onSyncDone(sync);
       }),
       dev.on('log', (line) => this.log(line)),
-      dev.on('error', (err) => this.fail('Band', err)),
+      dev.on('error', (err) => {
+        if (!quiet) return this.fail('Band', err);
+        this.log(`Automatisches Verbinden: ${err.message}`);
+        this.set({ outOfRange: true });
+      }),
     ];
     this.device = dev;
     return dev;
@@ -183,8 +204,15 @@ export class AppController {
     this.set({ conn });
     if (conn === 'connected') {
       this.reconnectAttempt = 0;
+      if (this.state.outOfRange) this.set({ outOfRange: false });
+      if (!this.autoLiveTried) {
+        this.autoLiveTried = true;
+        void this.autoLive();
+      }
     }
     if (conn === 'disconnected') {
+      this.liveOptOut = false;
+      this.autoLiveTried = false;
       this.stopLiveTimer();
       this.set({ liveOn: false, live: null });
       void this.flushLive();
@@ -195,35 +223,91 @@ export class AppController {
 
   /** Muss aus einem Tipp des Nutzers heraus aufgerufen werden (Web-Bluetooth-Vorgabe). */
   async connect(): Promise<void> {
-    this.set({ error: null });
+    // Doppelter Tipp: denselben Aufbau abwarten.
+    if (this.inflight && !this.inflight.auto) return this.inflight.p;
+    this.set({ error: null, outOfRange: false });
     this.userDisconnected = false;
     this.cancelReconnect();
     if (this.state.demo) {
       await this.startDemo();
       return;
     }
-    const dev = this.createDevice();
-    try {
-      await dev.connect();
-      await this.requestWakeLock();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // Abbruch im Geräte-Dialog ist kein Fehler.
-      if (/cancel|abgebrochen|NotFoundError|chosen/i.test(msg)) this.log(`Verbindung abgebrochen: ${msg}`);
-      else this.fail('Verbindung fehlgeschlagen', e);
-    }
+    const prior = this.inflight;
+    const run = async () => {
+      if (prior) {
+        // Ein automatischer Versuch läuft schon: abwarten statt ein zweites Gerät auf dasselbe Band zu setzen.
+        await prior.p;
+        // Inzwischen auf „Abbrechen“ getippt? Dann nicht doch noch verbinden.
+        if (this.userDisconnected) return;
+        this.cancelReconnect();
+        if (this.state.conn !== 'disconnected') return;
+      }
+      // Ohne vorherigen Versuch läuft alles bis requestDevice synchron (Web-Bluetooth-Nutzergeste).
+      const dev = this.createDevice();
+      try {
+        await dev.connect();
+        await this.requestWakeLock();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // Abbruch im Geräte-Dialog ist kein Fehler.
+        if (/cancel|abgebrochen|NotFoundError|chosen/i.test(msg)) this.log(`Verbindung abgebrochen: ${msg}`);
+        else this.fail('Verbindung fehlgeschlagen', e);
+      }
+    };
+    await this.track(run(), false);
   }
 
-  private async tryReconnect(): Promise<void> {
-    const dev = this.createDevice();
-    try {
-      if (await dev.reconnect()) await this.requestWakeLock();
-    } catch (e) {
-      this.log(`Automatisches Verbinden nicht möglich: ${e instanceof Error ? e.message : e}`);
-    }
+  /**
+   * Verbindet ohne Auswahldialog mit dem gemerkten Band (z. B. bei Rückkehr in die App) – nicht nach „Trennen“
+   * und nicht in der Demo. Ein geplanter Wiederholungsversuch wird vorgezogen, ohne den Zyklus neu zu starten.
+   */
+  async reconnectRemembered(): Promise<void> {
+    if (this.state.demo || this.userDisconnected || !this.state.supported) return;
+    if (this.inflight) return this.inflight.p;
+    if (this.state.conn !== 'disconnected') return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    await this.tryReconnect();
   }
 
-  /** Nach einem unerwarteten Verbindungsabbruch ein paar Mal neu verbinden (nur wenn der Browser es ohne Dialog erlaubt). */
+  /** Automatischer Versuch ohne Dialog. Fehler landen nur im Protokoll (+ Status „nicht in Reichweite“). */
+  private tryReconnect(): Promise<void> {
+    if (this.inflight) return this.inflight.p;
+    // Ein Gerät mitten im Aufbau oder verbunden wird nie ersetzt.
+    if (this.state.conn !== 'disconnected') return Promise.resolve();
+    const run = async () => {
+      const dev = this.createDevice(undefined, true);
+      try {
+        if (await dev.reconnect()) await this.requestWakeLock();
+      } catch (e) {
+        this.log(`Automatisches Verbinden nicht möglich: ${e instanceof Error ? e.message : e}`);
+      }
+    };
+    return this.track(run(), true);
+  }
+
+  private track(p: Promise<void>, auto: boolean): Promise<void> {
+    const entry = { p, auto };
+    this.inflight = entry;
+    const clear = () => {
+      if (this.inflight === entry) this.inflight = null;
+    };
+    p.then(clear, clear);
+    return p;
+  }
+
+  /** Live-Puls nach jedem Verbinden automatisch einschalten (einmal pro Verbindung, keine Schleife bei Fehlern). */
+  private async autoLive(): Promise<void> {
+    if (!this.device || this.liveOptOut || this.state.liveOn) return;
+    await this.applyLive(true, true);
+  }
+
+  /** Soll der Live-Puls außerhalb eines Workouts an sein? (Automatisch an, außer der Nutzer hat ihn ausgeschaltet.) */
+  get liveWanted(): boolean {
+    return !this.liveOptOut;
+  }
+
+  /** Nach einem unerwarteten Verbindungsabbruch ein paar Mal neu verbinden (nur ohne Auswahldialog möglich). */
   private scheduleReconnect() {
     if (this.reconnectTimer || this.reconnectAttempt >= RECONNECT_DELAYS_MS.length) return;
     const delay = RECONNECT_DELAYS_MS[this.reconnectAttempt++];
@@ -250,21 +334,33 @@ export class AppController {
     }
   }
 
-  async syncNow(): Promise<void> {
+  /** `quiet`: automatischer Sync (z. B. beim Zurückkehren in die App) – Fehler nur ins Protokoll. */
+  async syncNow(quiet = false): Promise<void> {
     if (!this.device || this.state.conn !== 'connected') return;
     try {
       await this.device.syncHistory();
     } catch (e) {
-      this.fail('Sync', e);
+      if (quiet) this.log(`Automatischer Sync fehlgeschlagen: ${e instanceof Error ? e.message : e}`);
+      else this.fail('Sync', e);
     }
   }
 
-  async setLive(on: boolean): Promise<void> {
+  /**
+   * Live-Puls an/aus. Die Wahl des Nutzers („aus“) gilt bis zum Trennen; beim nächsten Verbinden ist er wieder
+   * automatisch an. `remember: false` (z. B. Workout) schaltet nur, ohne die Wahl des Nutzers zu ändern.
+   */
+  async setLive(on: boolean, remember = true): Promise<void> {
+    if (remember) this.liveOptOut = !on;
+    await this.applyLive(on, false);
+  }
+
+  private async applyLive(on: boolean, quiet: boolean): Promise<void> {
     if (!this.device) return;
     try {
       await this.device.setRealtimeHr(on);
     } catch (e) {
-      this.fail('Live-Puls', e);
+      if (quiet) this.log(`Live-Puls automatisch einschalten: ${e instanceof Error ? e.message : String(e)}`);
+      else this.fail('Live-Puls', e);
       return;
     }
     this.set({ liveOn: on, liveSeries: on ? this.state.liveSeries : [] });
@@ -342,6 +438,7 @@ export class AppController {
     try {
       const blob = await exportBackup();
       const name = `whoop-plus-backup-${today()}.json`;
+      if (isNativeApp()) return await shareFileNative(blob, name, 'Whoop Plus Sicherung');
       const file = new File([blob], name, { type: 'application/json' });
       const nav = navigator as Navigator & { canShare?(d: { files: File[] }): boolean };
       if (nav.canShare?.({ files: [file] })) {
@@ -419,7 +516,7 @@ export class AppController {
       this.set({ stats: await sampleBounds() });
       if (this.state.storage?.persisted !== true) {
         const persisted = await requestPersistence();
-        this.log(persisted ? 'Daten werden dauerhaft gespeichert.' : 'Hinweis: Browser garantiert keine dauerhafte Speicherung – regelmäßig eine Sicherung exportieren.');
+        this.log(persisted ? 'Daten werden dauerhaft gespeichert.' : 'Hinweis: Dauerhafte Speicherung ist nicht garantiert – regelmäßig eine Sicherung exportieren.');
       }
       await this.refreshStorage();
     } catch (e) {

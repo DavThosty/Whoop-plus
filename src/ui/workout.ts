@@ -152,7 +152,7 @@ export class WorkoutSession {
     if (this.liveBusy || app.state.liveOn || !isLinked(app.state.conn) || Date.now() < this.liveRetryAt) return;
     this.liveBusy = true;
     try {
-      await app.setLive(true);
+      await app.setLive(true, false); // nur fürs Workout – ändert nicht die Wahl „Live aus“ des Nutzers
     } finally {
       this.liveBusy = false;
     }
@@ -256,7 +256,8 @@ export class WorkoutSession {
       zoneSeconds: stats.zoneSeconds, hr: acc.points(), rhr: this.state.rhr, maxHrRef: this.state.maxHr,
     };
     void app.haptic(...HAPTIC_STOP);
-    if (!this.prevLive && app.state.liveOn) await app.setLive(false);
+    // Zurück zum Zustand außerhalb des Workouts: Live-Puls bleibt an, wenn er automatisch an sein soll.
+    if (!this.prevLive && !app.liveWanted && app.state.liveOn) await app.setLive(false);
     void app.keepAwake(false);
     await this.finishRecord(record, stats);
   }

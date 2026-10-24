@@ -215,7 +215,7 @@ const FIRST_STEPS = [
   'iOS-Einstellungen → Bluetooth → bei „WHOOP …“ auf ⓘ → „Dieses Gerät ignorieren“.',
   'Band aufladen und anlegen, dann „Band verbinden“ tippen und das Band auswählen.',
   'Beim ersten Mal fragt iOS nach der Kopplung – bestätigen. Ohne Kopplung ignoriert das Band alle Befehle.',
-  'Die App beim Synchronisieren geöffnet lassen; im Hintergrund kann Bluefy keine Verbindung halten.',
+  'Zum Synchronisieren die App öffnen und kurz geöffnet lassen – im Hintergrund pausiert iOS die App nach kurzer Zeit.',
 ];
 
 export function FirstSteps() {
@@ -244,7 +244,7 @@ function Welcome(props: { goTo: (tab: Tab) => void }) {
           ) : (
             <>
               <div class="note warn" style={{ textAlign: 'left' }}>
-                Dieser Browser kann kein Bluetooth. Öffne die App auf dem iPhone in <b>Bluefy</b> (kostenlos im App Store). Safari unterstützt Web Bluetooth nicht.
+                Hier ist kein Bluetooth verfügbar. Whoop Plus ist als iPhone-App gedacht; im Desktop-Browser klappt die Verbindung nur mit Web Bluetooth (z. B. Chrome).
               </div>
               <button class="btn primary" onClick={() => app.startDemo()}><Icon name="play" /> Demo starten</button>
             </>

@@ -26,6 +26,7 @@ const fake = vi.hoisted(() => {
     state,
     setLiveImpl: async (on: boolean) => { state.liveOn = on; },
     setLiveCalls: 0,
+    liveWanted: false,
     haptic: vi.fn(async () => {}),
     keepAwake: vi.fn(async () => {}),
     listeners,
@@ -36,6 +37,7 @@ const fake = vi.hoisted(() => {
 vi.mock('./controller', () => ({
   app: {
     get state() { return fake.state; },
+    get liveWanted() { return fake.liveWanted; },
     setLive: async (on: boolean) => { fake.setLiveCalls++; await fake.setLiveImpl(on); },
     haptic: fake.haptic,
     keepAwake: fake.keepAwake,
@@ -66,6 +68,7 @@ beforeEach(() => {
   fake.state.conn = 'connected';
   fake.state.liveOn = false;
   fake.setLiveCalls = 0;
+  fake.liveWanted = false;
   fake.setLiveImpl = async (on: boolean) => { fake.state.liveOn = on; };
   fake.listeners.clear();
   fake.live.clear();
@@ -89,6 +92,17 @@ describe('Workout-Sitzung', () => {
     expect(w.state.summary!.zoneSeconds[2]).toBeGreaterThanOrEqual(58);
     expect(kv.get(CHECKPOINT_KEY)).toBeNull();
     expect(fake.state.liveOn).toBe(false); // vorheriger Zustand wiederhergestellt
+  });
+
+  it('Beenden lässt den Live-Puls an, wenn er automatisch an sein soll', async () => {
+    fake.liveWanted = true;
+    const w = new WorkoutSession();
+    await w.start();
+    expect(fake.state.liveOn).toBe(true);
+    await run(10, 120);
+    await w.stop();
+    expect(fake.state.liveOn).toBe(true);
+    expect(fake.setLiveCalls).toBe(1); // nur das Einschalten beim Start
   });
 
   it('Pausen zählen nicht zur Dauer', async () => {

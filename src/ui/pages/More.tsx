@@ -3,6 +3,7 @@ import type { ExplainKey } from '../../analytics';
 import { wipeAll } from '../../store/db';
 import type { Profile } from '../../types';
 import { GlassCard, Icon, Stat } from '../components';
+import { isNativeApp } from '../../ble/platform';
 import { app } from '../controller';
 import { ExplainSheet } from '../explain';
 import { dateTime, relative } from '../format';
@@ -29,8 +30,6 @@ export function More() {
       <ProfileSection />
       <div class="section-label">Daten</div>
       <DataSection />
-      <div class="section-label">Zugang</div>
-      <AccountSection />
       <div class="section-label">Wie wird gerechnet?</div>
       <section class="glass list">
         {TOPICS.map((t) => (
@@ -59,7 +58,7 @@ function BandSection() {
     return (
       <GlassCard>
         <div class="note warn">
-          Dieser Browser kann kein Bluetooth. Öffne die App auf dem iPhone in <b>Bluefy</b> (kostenlos im App Store). Safari unterstützt Web Bluetooth nicht.
+          Hier ist kein Bluetooth verfügbar. Whoop Plus ist als iPhone-App gedacht; im Desktop-Browser klappt die Verbindung nur mit Web Bluetooth (z. B. Chrome).
         </div>
         <div class="btns" style={{ marginTop: 12 }}>
           <button class="btn primary" onClick={() => app.startDemo()}><Icon name="play" /> Demo starten</button>
@@ -77,7 +76,7 @@ function BandSection() {
           </span>
           <div class="grow">
             <div style={{ fontWeight: 700, fontSize: 17, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.info?.name ?? 'Whoop 4.0'}{s.demo && ' · Demo'}</div>
-            <div class="small muted">{connLabel(s.conn)}{s.postSync || s.computing ? ' · berechne …' : ''}</div>
+            <div class="small muted">{connLabel(s.conn, s.outOfRange)}{s.postSync || s.computing ? ' · berechne …' : ''}</div>
           </div>
           {s.battery && <BatteryBadge percent={s.battery.percent} charging={s.battery.charging} />}
         </div>
@@ -227,9 +226,9 @@ function DataSection() {
       <div class="small faint" style={{ marginTop: 12 }}>
         Alles bleibt lokal auf diesem iPhone. Das Band speichert ungefähr 14 Tage – synchronisiere also spätestens alle paar Tage.
       </div>
-      {s.storage && s.storage.persisted !== true && (
+      {s.storage && s.storage.persisted !== true && !isNativeApp() && (
         <div class="note warn" style={{ marginTop: 12 }}>
-          Der Browser garantiert keine dauerhafte Speicherung. Exportiere regelmäßig eine Sicherung.
+          Dauerhafte Speicherung ist hier nicht garantiert. Exportiere regelmäßig eine Sicherung.
         </div>
       )}
       <div class="small muted" style={{ marginTop: 16, marginBottom: 8, fontWeight: 600, fontSize: 12 }}>Sicherung (JSON)</div>
@@ -276,71 +275,6 @@ function DataSection() {
   );
 }
 
-// Der Server akzeptiert POST-Anfragen an /api nur als JSON (CSRF-Schutz).
-const JSON_POST: RequestInit = {
-  method: 'POST',
-  credentials: 'same-origin',
-  headers: { 'Content-Type': 'application/json' },
-  body: '{}',
-};
-
-function AccountSection() {
-  const [pair, setPair] = useState<{ url: string; expiresAt: number } | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const createPair = async () => {
-    setErr(null);
-    try {
-      const res = await fetch('/api/auth/pair', JSON_POST);
-      if (res.status === 403) throw new Error('Kopplungslinks lassen sich nur nach einer Passkey-Anmeldung (Safari) erstellen.');
-      if (!res.ok) throw new Error(`Server antwortet mit ${res.status}`);
-      setPair(await res.json());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const copy = async () => {
-    if (!pair) return;
-    try {
-      await navigator.clipboard.writeText(pair.url);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <GlassCard>
-      <div class="small muted" style={{ marginBottom: 12 }}>
-        Ein Kopplungslink meldet einen weiteren Browser (z. B. Bluefy) für 30 Tage an. Er ist 10 Minuten gültig und nur einmal verwendbar.
-      </div>
-      {err && <div class="note err" style={{ marginBottom: 12 }}>{err}</div>}
-      {pair ? (
-        <div class="stack">
-          <input readOnly value={pair.url} onFocus={(e) => (e.target as HTMLInputElement).select()} />
-          <button class="btn blue" onClick={copy}>{copied ? <><Icon name="check" /> Kopiert</> : 'Link kopieren'}</button>
-          <div class="small faint">Gültig bis {new Date(pair.expiresAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</div>
-        </div>
-      ) : (
-        <button class="btn" onClick={createPair}><Icon name="key" /> Kopplungslink erstellen</button>
-      )}
-      <div class="btns" style={{ marginTop: 10 }}>
-        <button
-          class="btn danger"
-          onClick={async () => {
-            await fetch('/api/auth/logout', JSON_POST).catch(() => {});
-            location.href = '/login';
-          }}
-        >
-          Abmelden
-        </button>
-      </div>
-    </GlassCard>
-  );
-}
-
 function LogSection() {
   const s = useApp();
   const [show, setShow] = useState(false);
@@ -368,7 +302,8 @@ function BatteryBadge(props: { percent: number; charging?: boolean }) {
   );
 }
 
-function connLabel(c: string): string {
+function connLabel(c: string, outOfRange: boolean): string {
+  if (c === 'disconnected' && outOfRange) return 'Nicht in Reichweite';
   return { disconnected: 'Nicht verbunden', connecting: 'Verbinde …', connected: 'Verbunden', syncing: 'Synchronisiere …' }[c] ?? c;
 }
 
