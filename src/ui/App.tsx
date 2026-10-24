@@ -8,6 +8,7 @@ import { useApp, useDay, useSelect, useStore } from './hooks';
 import { Ceremony } from './overlays/Ceremony';
 import { Story } from './overlays/Story';
 import { WorkoutScreen } from './overlays/Workout';
+import { NavBar } from './NavBar';
 import { More } from './pages/More';
 import { Sleep } from './pages/Sleep';
 import { Today } from './pages/Today';
@@ -31,7 +32,8 @@ export function App() {
     postSync: a.postSync, computing: a.computing, statsLoaded: !!a.stats, statsCount: a.stats?.count ?? null,
   }));
   const f = useStore(flow);
-  const w = useSelect(workout, (x) => ({ phase: x.phase, recovery: !!x.recovery }));
+  const w = useSelect(workout, (x) => ({ phase: x.phase, recovery: !!x.recovery, minimized: x.minimized }));
+  const workoutOpen = w.phase !== 'idle' && !w.minimized;
   const [tab, setTab] = useState<Tab>(() => tabFromHash(location.hash.slice(1)) ?? 'heute');
   const [date, setDate] = useState(today());
   const [followToday, setFollowToday] = useState(true);
@@ -86,7 +88,7 @@ export function App() {
 
   // Solange ein Vollbild offen ist: Hintergrund nicht scrollen, Animationen pausieren und – sobald das
   // Vollbild die Seite ganz verdeckt – die Seite ausblenden (spart das Neuberechnen der Glas-Unschärfe).
-  const overlayOpen = !!(f.detail || f.story || f.ceremony || w.phase !== 'idle');
+  const overlayOpen = !!(f.detail || f.story || f.ceremony || workoutOpen);
   const [settled, setSettled] = useState(false);
   useEffect(() => {
     document.body.style.overflow = overlayOpen ? 'hidden' : '';
@@ -139,18 +141,10 @@ export function App() {
         </main>
       </div>
 
-      <nav class="tabbar" aria-label="Navigation" style={covered ? { visibility: 'hidden' } : undefined}>
-        <TabBtn id="heute" tab={tab} setTab={setTab} icon="today" label="Heute" />
-        <TabBtn id="schlaf" tab={tab} setTab={setTab} icon="moon" label="Schlaf" />
-        <button class="tab-center" aria-label="Workout starten" onClick={() => void flow.startWorkout()}>
-          <Icon name="bolt" />
-        </button>
-        <TabBtn id="trends" tab={tab} setTab={setTab} icon="trends" label="Trends" />
-        <TabBtn id="mehr" tab={tab} setTab={setTab} icon="more" label="Mehr" />
-      </nav>
+      <NavBar tab={tab} setTab={setTab} hidden={covered} />
 
       {f.detail && <DetailView key={`${f.detail.kind}-${f.detail.date}`} kind={f.detail.kind} date={f.detail.date} rect={f.detail.rect} />}
-      {w.phase !== 'idle' && <WorkoutScreen />}
+      {workoutOpen && <WorkoutScreen />}
       {f.story && <Story date={f.story.date} />}
       {f.ceremony && <Ceremony />}
       {f.connectPrompt && <ConnectPrompt goTo={goTo} />}
@@ -159,15 +153,6 @@ export function App() {
   );
 }
 
-function TabBtn(props: { id: Tab; tab: Tab; setTab: (t: Tab) => void; icon: string; label: string }) {
-  const on = props.tab === props.id;
-  return (
-    <button class={`tab ${on ? 'on' : ''}`} onClick={() => props.setTab(props.id)} aria-current={on ? 'page' : undefined}>
-      <Icon name={props.icon} />
-      {props.label}
-    </button>
-  );
-}
 
 function statusText(conn: string, battery: number | null, busy: boolean, demo: boolean): string {
   if (conn === 'connecting') return 'Verbinde …';

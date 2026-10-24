@@ -29,6 +29,8 @@ export interface WorkoutState {
   error: string | null;
   /** Beim Start gefundenes, unterbrochenes Workout. */
   recovery: WorkoutCheckpoint | null;
+  /** Laufendes Workout ist verkleinert (App sichtbar, Halo-Knopf öffnet es wieder). */
+  minimized: boolean;
   /** Wird nach jedem gespeicherten/gelöschten Workout erhöht. */
   version: number;
 }
@@ -50,7 +52,7 @@ const isLinked = (c: string) => c === 'connected' || c === 'syncing';
 export class WorkoutSession {
   state: WorkoutState = {
     phase: 'idle', startTs: null, elapsedS: 0, hr: null, zone: 0, stats: null, points: [],
-    rhr: 60, maxHr: 190, linkLost: false, summary: null, error: null, recovery: null, version: 0,
+    rhr: 60, maxHr: 190, linkLost: false, summary: null, error: null, recovery: null, minimized: false, version: 0,
   };
   private listeners = new Set<Listener>();
   private acc: WorkoutAccumulator | null = null;
@@ -96,7 +98,7 @@ export class WorkoutSession {
       this.set({ error: 'Bitte zuerst das Band verbinden.' });
       return false;
     }
-    this.set({ phase: 'starting', error: null, summary: null, linkLost: false, hr: null, zone: 0, stats: null, points: [], elapsedS: 0 });
+    this.set({ phase: 'starting', error: null, summary: null, linkLost: false, hr: null, zone: 0, stats: null, points: [], elapsedS: 0, minimized: false });
     // Ruhepuls der letzten Nacht, Maximalpuls aus dem Profil.
     let rhr = 60;
     try {
@@ -268,7 +270,7 @@ export class WorkoutSession {
       error = `Workout konnte nicht gespeichert werden: ${e instanceof Error ? e.message : String(e)}`;
     }
     this.acc = null;
-    this.set({ phase: 'summary', summary: record, stats, error, recovery: null, version: this.state.version + 1 });
+    this.set({ phase: 'summary', summary: record, stats, error, recovery: null, minimized: false, version: this.state.version + 1 });
   }
 
   // --- Unterbrochenes Workout ---
@@ -349,6 +351,15 @@ export class WorkoutSession {
   async discardRecovered(): Promise<void> {
     await setKv(CHECKPOINT_KEY, null).catch(() => {});
     this.set({ recovery: null });
+  }
+
+  /** Workout-Ansicht verkleinern (das Workout läuft weiter). */
+  minimize() {
+    if (this.running && this.state.phase !== 'stopping') this.set({ minimized: true });
+  }
+
+  restore() {
+    if (this.state.minimized) this.set({ minimized: false });
   }
 
   dismiss() {

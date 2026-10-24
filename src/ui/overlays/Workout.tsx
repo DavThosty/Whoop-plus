@@ -30,7 +30,10 @@ function LiveScreen() {
       <div class="zone-bg2" />
       <div class="content">
         <div class="w-top">
-          <div>
+          <button class="circle-btn" style={{ background: 'rgba(0,0,0,0.3)' }} aria-label="Workout verkleinern" disabled={w.phase === 'stopping'} onClick={() => workout.minimize()}>
+            <Icon name="chevD" />
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div class="eyebrow" style={{ color: 'rgba(255,255,255,0.7)' }}>{paused ? 'Pausiert' : w.phase === 'starting' ? 'Startet …' : w.phase === 'stopping' ? 'Wird gespeichert …' : 'Workout'}</div>
             <div class="w-time">{hms(w.elapsedS)}</div>
           </div>

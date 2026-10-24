@@ -19,8 +19,8 @@
   --glow: var(--neutral);
   --radius: 24px;
   --radius-s: 16px;
-  --tabbar-h: 66px;
-  --tabbar-gap: 14px;
+  --tabbar-h: 90px;
+  --tabbar-gap: 10px;
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-t: env(safe-area-inset-top, 0px);
   --ease: cubic-bezier(0.22, 0.9, 0.24, 1);
@@ -74,7 +74,7 @@ svg { overflow: visible; }
   50% { transform: translateX(-50%) scale(1.08); opacity: 0.48; }
 }
 /* Während ein Vollbild offen ist, steht alles darunter still. */
-.overlay-open .app *, .overlay-open .tabbar, .overlay-open .tabbar *, .overlay-open > .bg-glow::before, .overlay-open > .bg-glow::after { animation-play-state: paused !important; }
+.overlay-open .app *, .overlay-open .navbar *, .overlay-open > .bg-glow::before, .overlay-open > .bg-glow::after { animation-play-state: paused !important; }
 
 /* ---------- App-Rahmen ---------- */
 .app {
@@ -346,35 +346,57 @@ ol.steps li::before { content: counter(s); position: absolute; left: 0; top: -1p
 /* Log */
 .log { font-family: 'SF Mono', ui-monospace, Menlo, 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-2); max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; background: rgba(0, 0, 0, 0.3); border-radius: 12px; padding: 10px; }
 
-/* ---------- Tab-Leiste ---------- */
-.tabbar {
-  position: fixed; z-index: 30;
-  left: 50%; transform: translateX(-50%);
+/* ---------- Navigation „Zonen-Halo“ ---------- */
+.navbar {
+  position: fixed; z-index: 30; left: 50%; transform: translateX(-50%);
   bottom: calc(var(--safe-b) + var(--tabbar-gap));
-  width: calc(100% - 32px); max-width: 420px; height: var(--tabbar-h);
-  display: grid; grid-template-columns: 1fr 1fr 78px 1fr 1fr; align-items: center;
-  border-radius: 999px; padding: 0 6px;
-  background: rgba(18, 22, 28, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 40px -10px rgba(0, 0, 0, 0.8);
+  width: calc(100% - 20px); max-width: 440px;
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 6px;
+  pointer-events: none;
 }
-.tabbar .tab { border: 0; background: none; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10.5px; font-weight: 650; color: var(--text-3); cursor: pointer; transition: color 0.25s, transform 0.2s var(--ease); letter-spacing: 0.01em; }
-.tabbar .tab:active { transform: scale(0.92); }
-.tabbar .tab.on { color: var(--text); }
-.tabbar .tab svg { width: 23px; height: 23px; }
-.tabbar .tab.on svg { filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.35)); }
-.tab-center {
-  justify-self: center; width: 62px; height: 62px; margin-top: -30px; border-radius: 50%; border: 0; cursor: pointer;
-  display: grid; place-items: center; color: #05070a;
-  background: radial-gradient(circle at 35% 25%, #ffffff, var(--glow) 100%);
-  background: radial-gradient(circle at 35% 25%, #ffffff, color-mix(in srgb, var(--glow) 55%, #ffffff) 45%, var(--glow) 100%);
-  box-shadow: 0 0 0 5px rgba(5, 7, 10, 0.9), 0 0 0 6px rgba(255, 255, 255, 0.1), 0 10px 30px -4px rgba(255, 255, 255, 0.25);
-  box-shadow: 0 0 0 5px rgba(5, 7, 10, 0.9), 0 0 0 6px rgba(255, 255, 255, 0.1), 0 10px 30px -4px color-mix(in srgb, var(--glow) 70%, transparent);
-  transition: transform 0.25s var(--ease-spring), background 1.2s;
+.navbar > * { pointer-events: auto; }
+.isl {
+  height: 74px; border-radius: 30px; padding: 0 4px; display: flex; align-items: center; gap: 2px; flex: none;
+  background: rgba(20, 22, 28, 0.62); border: 1px solid rgba(255, 255, 255, 0.11);
+  -webkit-backdrop-filter: blur(26px) saturate(160%); backdrop-filter: blur(26px) saturate(160%);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
-.tab-center:active { transform: scale(0.92); }
-.tab-center svg { width: 27px; height: 27px; }
+.ntab {
+  width: 56px; height: 66px; border: 0; background: none; border-radius: 24px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  color: var(--text-3); font-size: 10.5px; font-weight: 700; letter-spacing: 0.01em;
+  transition: color 0.25s, transform 0.2s var(--ease);
+}
+.ntab:active { transform: scale(0.92); }
+.ntab.on { color: #fff; }
+.nring { position: relative; width: 36px; height: 36px; display: grid; place-items: center; flex: none; font-size: 11px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.nring svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.nring .arc { transition: stroke-dasharray 0.9s var(--ease), stroke 0.6s, opacity 0.4s; }
+.ntab:not(.on) .nring span { color: var(--text-2); }
+.nicon { width: 36px; height: 36px; display: grid; place-items: center; }
+.ntab.on .nicon svg { filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.55)); }
+.nspark { display: flex; align-items: flex-end; gap: 2px; height: 20px; }
+.nspark i { width: 4px; border-radius: 2px; display: block; transition: height 0.8s var(--ease); }
+.ntab:not(.on) .nspark { opacity: 0.75; }
+.halo {
+  position: relative; width: 90px; height: 90px; flex: none; margin-bottom: 14px; border: 0; padding: 0; background: none; cursor: pointer;
+  display: grid; place-items: center; color: #fff; transition: transform 0.25s var(--ease-spring);
+}
+.halo:active { transform: scale(0.94); }
+.halo > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.halo .hseg { transition: opacity 0.5s, stroke-width 0.4s, stroke 0.6s; }
+.halo .disc {
+  width: 62px; height: 62px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 30%, rgba(40, 46, 56, 0.95), rgba(14, 17, 22, 0.96));
+  border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.halo .disc b { font-size: 21px; line-height: 1; font-weight: 800; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.halo .disc span { font-size: 8.5px; letter-spacing: 0.14em; font-weight: 800; margin-top: 3px; color: var(--text-2); }
+.halo .disc svg { width: 24px; height: 24px; }
+.halo:not(.linked) .disc { background: linear-gradient(180deg, #f1f3f5, #c9ced6); color: #05070a; border-color: transparent; }
+.halo:not(.linked) .disc span { color: #3a4048; font-size: 7.5px; margin-top: 1px; }
+.halo .disc.beat { animation: hbeat var(--beat, 1s) ease-out infinite; }
+@keyframes hbeat { 0%, 100% { transform: scale(1); } 14% { transform: scale(1.05); } 30% { transform: scale(0.99); } 45% { transform: scale(1.02); } }
 
 /* ---------- Sheets & Detailansicht ---------- */
 .sheet-backdrop {
@@ -549,3 +571,8 @@ ol.steps li::before { content: counter(s); position: absolute; left: 0; top: -1p
 .linkbtn::after { inset: -12px -6px; }
 .btn.small { position: relative; }
 .btn.small::after { inset: -2px 0; }
+/* Halo: leicht abgedunkelter Grund hinter den Segmenten, damit Inhalte darunter nicht stören. */
+.halo::before { content: ''; position: absolute; inset: 1px; border-radius: 50%; background: rgba(8, 10, 14, 0.5); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.halo .disc { position: relative; }
+/* Laufendes Workout: kleiner Aufnahmepunkt */
+.halo.running .disc::after { content: ''; position: absolute; top: 4px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #ff3b52; box-shadow: 0 0 8px #ff3b52; }

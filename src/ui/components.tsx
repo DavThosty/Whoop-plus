@@ -11,6 +11,7 @@ const ICONS: Record<string, JSX.Element> = {
   moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />,
   trends: <path d="M4 19V11M10 19V5M16 19v-6M21 19H3" />,
   more: <><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" /><rect x="2.5" y="5" width="19" height="14" rx="7" /></>,
+  dots: <><circle cx="5" cy="12" r="1.9" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.9" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.9" fill="currentColor" stroke="none" /></>,
   bolt: <path d="M13 2.5 4.5 13.5H11l-1 8 8.5-11H12l1-8Z" fill="currentColor" stroke="none" />,
   heart: <path d="M12 20.5s-7.5-4.6-9.2-9.4C1.7 7.8 3.9 4.5 7.2 4.5c2 0 3.6 1.1 4.8 2.8 1.2-1.7 2.8-2.8 4.8-2.8 3.3 0 5.5 3.3 4.4 6.6-1.7 4.8-9.2 9.4-9.2 9.4Z" fill="currentColor" stroke="none" />,
   chevR: <path d="m9 5 7 7-7 7" />,
