@@ -3,6 +3,22 @@
 Diese Anleitung bringt Whoop Plus als **echte App** auf dein iPhone – mit einer **kostenlosen Apple-ID**,
 einem **Windows-PC** (nur einmal für die Einrichtung) und **ohne Mac**.
 
+> ### Schnellstart
+>
+> 1. iPhone: **LocalDevVPN** aus dem App Store installieren und verbinden → [2.1](#21-iphone-vorbereiten-localdevvpn)
+> 2. PC: **iTunes** und **iloader** installieren → [2.2](#22-pc-vorbereiten-itunes-und-iloader)
+> 3. iPhone per USB an den PC, „Vertrauen“ → in iloader mit Apple-ID anmelden → **Install SideStore (Stable)** → [2.3](#23-sidestore-aufs-iphone-bringen)
+> 4. iPhone: Entwickler-App vertrauen, ab iOS 16 **Entwicklermodus** an (Neustart) → [2.3](#23-sidestore-aufs-iphone-bringen)
+> 5. SideStore öffnen, mit derselben Apple-ID anmelden, unter *My Apps* auf **„7 DAYS“** tippen → [2.3](#23-sidestore-aufs-iphone-bringen)
+> 6. **Ab hier kein PC mehr nötig.** USB-Kabel ab.
+> 7. SideStore → *Sources* → **+** → Quelle einfügen: `https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json` → [3.1](#31-einmalig-quelle-hinzufügen)
+> 8. In der Quelle **Whoop Plus** installieren → [3.2](#32-app-installieren)
+> 9. Kurzbefehle-Automation „jede Nacht verlängern“ einrichten → [4.1](#41-automatisch-verlängern-kurzbefehle)
+> 10. Whoop Plus öffnen und das Band koppeln → [6](#6-erster-start-und-kopplung-mit-dem-band)
+>
+> Später: Updates in SideStore unter *My Apps* → **„Update“** ([5](#5-updates)).
+> Wann der PC doch wieder nötig ist: [4.3](#43-wann-brauche-ich-den-pc-wieder).
+
 So hängt alles zusammen:
 
 ```
@@ -21,7 +37,8 @@ https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json
 
 - Es gibt keinen Server mehr. Alle Daten bleiben in der App auf dem iPhone.
 - Apps mit einer kostenlosen Apple-ID laufen **7 Tage**. SideStore verlängert sie direkt auf dem iPhone
-  („Refresh“). Den PC brauchst du nur für die Ersteinrichtung und falls SideStore selbst abläuft.
+  („Refresh“) – am bequemsten automatisch jede Nacht per Kurzbefehl (Abschnitt 4.1). Den PC brauchst du nur
+  für die Ersteinrichtung und in wenigen Ausnahmefällen (Abschnitt 4.3).
 
 > Stand der SideStore-Schritte: Oktober 2026, nach der offiziellen Anleitung auf
 > [docs.sidestore.io](https://docs.sidestore.io/docs/installation/prerequisites). Falls sich dort etwas
@@ -197,13 +214,87 @@ Falls die Quelle einmal nicht erreichbar ist:
 
 ## 4. Alle 7 Tage verlängern
 
-- SideStore versucht, Apps **im Hintergrund** zu verlängern. Dafür muss **LocalDevVPN verbunden** sein und
-  WLAN an. Verlass dich nicht blind darauf.
-- **Manuell:** LocalDevVPN verbinden → SideStore → *My Apps* → **„Refresh All“** (oder auf den Tage-Zähler
-  der App tippen). Am besten einmal pro Woche zu einem festen Zeitpunkt, z. B. sonntags.
-- **SideStore selbst** läuft ebenfalls nach 7 Tagen ab und wird mit „Refresh All“ mit verlängert. Ist
-  SideStore abgelaufen, musst du es mit dem PC und iloader neu installieren (Abschnitt 2.3).
-- Ist Whoop Plus abgelaufen, startet die App nicht. **Daten gehen dabei nicht verloren** – einfach verlängern.
+Mit einer kostenlosen Apple-ID laufen **SideStore und Whoop Plus je 7 Tage**. Ein „Refresh“ in SideStore
+signiert beide neu, die 7 Tage beginnen von vorn. Dafür braucht es **WLAN** und **verbundenes LocalDevVPN** –
+aber keinen PC. Ein Update von Whoop Plus (Abschnitt 5) setzt nur dessen 7 Tage zurück, nicht die von SideStore.
+
+### 4.1 Automatisch verlängern (Kurzbefehle)
+
+SideStore bringt eine Kurzbefehle-Aktion **„Refresh All Apps“** mit, LocalDevVPN eine Aktion zum
+**Verbinden**. Zusammen in einer Automation verlängert das iPhone jede Nacht von selbst.
+
+**Kurzbefehl anlegen** (App *Kurzbefehle* → Tab *Kurzbefehle* → **+**), Name z. B. „Apps verlängern“:
+
+1. Aktion hinzufügen → nach **LocalDevVPN** suchen → Aktion **„LocalDevVPN“** (bzw. „Enable VPN“), Operation
+   **Enable**.
+2. Aktion **„Warten“** → **3 Sekunden** (Zeit für den VPN-Aufbau).
+3. Aktion hinzufügen → nach **SideStore** suchen → **„Refresh All Apps“**. Auf den Pfeil der Aktion tippen und
+   **„Beim Ausführen anzeigen“ ausschalten**.
+4. Den Kurzbefehl **einmal von Hand starten** (bei verbundenem WLAN) und alle Rückfragen erlauben – sonst
+   bleibt die Automation später an einer Rückfrage hängen.
+
+**Automation anlegen** (Tab *Automation* → **+** bzw. „Persönliche Automation erstellen“):
+
+1. Auslöser **„Tageszeit“** → z. B. **03:00**, **Täglich**.
+2. **„Sofort ausführen“** wählen (statt „Nach Bestätigung ausführen“) und **„Bei Ausführung mitteilen“**
+   ausschalten. Unter iOS 15/16 heißt der Schalter **„Vor dem Ausführen fragen“** – ausschalten und
+   „Nicht fragen“ bestätigen.
+3. Als Aktion den Kurzbefehl **„Apps verlängern“** wählen → **Fertig**.
+4. Nachts das iPhone **ans Ladegerät** und **im WLAN** lassen. Alternative Auslöser: **„Ladegerät“ → „Ist
+   verbunden“** (läuft bei jedem Anstecken) oder zwei feste Uhrzeiten am Tag.
+
+**Kontrolle:** Morgens in SideStore unter *My Apps* auf die Tage-Zähler schauen – nach einem erfolgreichen
+Refresh stehen dort wieder 7 Tage. Ging es schief, einfach von Hand verlängern (4.2).
+
+**Was (noch) nicht geht bzw. unsicher ist – ehrlich gesagt:**
+
+- Die SideStore-Aktion „Refresh All Apps“ gibt es als moderne Kurzbefehle-Aktion ab **iOS 17**; auf älteren
+  iOS-Versionen bietet SideStore nur eine ältere Siri-Aktion an, ob die dort angezeigt wird, ist nicht geprüft.
+- Die LocalDevVPN-Aktion steht im aktuellen Quellcode von LocalDevVPN (ab iOS 16). Fehlt sie in deiner
+  Version: LocalDevVPN im App Store aktualisieren. Ohne diese Aktion lässt sich das VPN **nicht zuverlässig per
+  Kurzbefehl einschalten** – dann LocalDevVPN einfach **dauerhaft verbunden lassen** (es baut keine Verbindung
+  nach außen auf; laut SideStore kostet das keinen Akku). LocalDevVPN legt sein VPN zudem mit „Bei Bedarf
+  verbinden“ an; darauf allein solltest du dich aber nicht verlassen.
+- Läuft der Refresh länger als ca. 30 Sekunden, bittet SideStore iOS, ihn im Vordergrund fortzusetzen. Bei
+  gesperrtem iPhone entscheidet iOS, ob das klappt. Nutzer berichten, dass nächtliche Automationen gut laufen –
+  eine Garantie ist das nicht, daher die Kontrolle am Morgen.
+- Gelegentlich meldet Kurzbefehle nach einem SideStore-Update „Unbekannte Aktion“: die Aktion „Refresh All
+  Apps“ im Kurzbefehl löschen und neu hinzufügen.
+- SideStore hat zusätzlich eine eigene **Hintergrundaktualisierung** (SideStore → *Settings* → „Background
+  Refresh“, nur im WLAN; in iOS unter *Einstellungen → Allgemein → Hintergrundaktualisierung* für SideStore
+  erlauben). Wann iOS sie laufen lässt, bestimmt iOS – laut SideStore klappt es umso öfter, je häufiger du
+  SideStore öffnest. Gut als Ergänzung, nicht als Ersatz.
+
+Quellen: SideStore-Quellcode
+([Kurzbefehle-Aktionen](https://github.com/SideStore/SideStore/blob/develop/AltStore/Intents/App%20Intents/AppShortcuts.swift),
+[„Refresh All Apps“](https://github.com/SideStore/SideStore/blob/develop/AltStore/Intents/App%20Intents/RefreshAllAppsIntent.swift),
+[Hintergrundaktualisierung](https://github.com/SideStore/SideStore/blob/develop/AltStore/AppDelegate.swift)),
+LocalDevVPN-Quellcode ([Kurzbefehle-Aktion](https://github.com/seomin0610/LocalDevVPN/blob/main/LocalDevVPN/VPNShortcuts.swift)),
+Apple: [Persönliche Automation erstellen](https://support.apple.com/de-de/guide/shortcuts/apdfbdbd7123/ios),
+Erfahrungsbericht mit nächtlicher Automation:
+[kitsah.bearblog.dev](https://kitsah.bearblog.dev/how-to-setup-livecontainer-sidestore-with-automatic-refreshing/)
+(Stand Oktober 2026).
+
+### 4.2 Von Hand verlängern
+
+LocalDevVPN verbinden (WLAN an) → SideStore → *My Apps* → **„Refresh All“** (oder auf den Tage-Zähler einer
+App tippen). Ohne Automation: einmal pro Woche zu einem festen Zeitpunkt, z. B. sonntags.
+
+Ist Whoop Plus abgelaufen, startet die App nicht. **Daten gehen dabei nicht verloren** – einfach verlängern.
+
+### 4.3 Wann brauche ich den PC wieder?
+
+| Fall | So vermeidest du ihn | Wenn es doch passiert |
+|---|---|---|
+| **SideStore selbst ist abgelaufen** (mehr als 7 Tage kein erfolgreicher Refresh – SideStore startet dann nicht mehr und kann sich nicht selbst verlängern) | Automation aus 4.1; morgens ab und zu auf den Tage-Zähler schauen; spätestens bei „1 DAY“ von Hand verlängern | PC + iloader: **SideStore neu installieren** (Abschnitt 2.3). Whoop Plus und seine Daten bleiben auf dem iPhone; danach in SideStore „Refresh All“. |
+| **Pairing-Datei ungültig** (Fehler wie „AFC Connection Failure“/Pairing-Fehler trotz verbundenem VPN). Passiert laut SideStore nach einem **iOS-Update** oder **Zurücksetzen** des iPhones, gelegentlich auch ohne erkennbaren Grund. Auch *Einstellungen → Allgemein → iPhone übertragen/zurücksetzen → Zurücksetzen → Standort & Datenschutz* setzt die Vertrauensstellungen zu Computern zurück. | iOS-Updates bewusst einspielen (danach SideStore einmal testen, solange noch Tage übrig sind); „Standort & Datenschutz“ nicht zurücksetzen; Entwicklermodus eingeschaltet lassen | PC + iloader: **nur die Pairing-Datei ersetzen** (Fehlerbehebung → *Pairing-Datei ersetzen*) – dauert ca. 2 Minuten, keine Neuinstallation. |
+| **Neues iPhone** (oder iPhone komplett zurückgesetzt) | – | Einrichtung ab Abschnitt 2 neu. Vorher in Whoop Plus *Mehr → Daten → Sicherung → Exportieren*, auf dem neuen iPhone „Einspielen“. |
+
+**Wichtig:** Whoop Plus **nie löschen**, um ein Problem zu beheben – solange die App nicht gelöscht wird,
+bleiben ihre Daten auch dann erhalten, wenn sie abgelaufen ist oder SideStore neu installiert wird.
+
+Quelle zur Pairing-Datei: [docs.sidestore.io – Pairing File](https://docs.sidestore.io/docs/advanced/pairing-file),
+[Common Issues](https://docs.sidestore.io/docs/troubleshooting/common-issues).
 
 ## 5. Updates
 
