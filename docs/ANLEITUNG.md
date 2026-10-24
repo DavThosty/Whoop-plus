@@ -24,9 +24,14 @@ Diese Anleitung ist alles, was du brauchst. Einmal einrichten (ca. 30 Minuten), 
 3. Den Einrichtungs-Helfer laden:
    **[WhoopPlus-Setup.exe](https://github.com/DavThosty/Whoop-plus/releases/download/setup-helper/WhoopPlus-Setup.exe)**
 4. Die Datei starten. Windows fragt einmal nach: auf **Weitere Informationen** → **Trotzdem ausführen** klicken.
+   Die Warnung kommt, weil das Programm keine gekaufte Signatur hat – der Quellcode ist offen auf GitHub
+   ([tools/windows-setup](../tools/windows-setup)). Hat Windows Defender die Datei entfernt: **Windows-Sicherheit** →
+   **Viren- & Bedrohungsschutz** → **Schutzverlauf** → Eintrag öffnen → **Aktionen** → **Wiederherstellen**.
 5. iPhone per USB anschließen. Fragt das iPhone **„Diesem Computer vertrauen?“** → **Vertrauen** → Code eingeben.
-6. Den Anweisungen des Helfers folgen und dich mit deiner **Apple-ID** anmelden. Der Helfer bringt die App
-   **SideStore** aufs iPhone.
+6. Den Anweisungen des Helfers folgen. Er installiert, was auf dem PC fehlt, und zeigt dir jeden Knopf, den du
+   tippen musst. Mit deiner **Apple-ID** meldest du dich nur im Programm **iloader** an, das der Helfer öffnet –
+   der Helfer selbst fragt nie danach. So kommt die App **SideStore** aufs iPhone.
+   Die folgenden Schritte 7–10 zeigt dir der Helfer auch noch einmal an.
 
 **Wieder am iPhone:**
 
@@ -40,7 +45,9 @@ Diese Anleitung ist alles, was du brauchst. Einmal einrichten (ca. 30 Minuten), 
 
 Fertig – **den PC brauchst du jetzt nicht mehr**. Das Kabel kann ab.
 
-> Klappt der Helfer nicht? Die Einrichtung geht auch von Hand: [TECHNIK.md, Abschnitt 2](TECHNIK.md#2-einmalig-sidestore-installieren-windows-pc).
+> Klappt etwas im Helfer nicht? Auf **Hilfe** klicken – dann ist ein Fehlerbericht kopiert, den du mit
+> **Strg + V** in eine Nachricht einfügen und verschicken kannst. Die Einrichtung geht auch von Hand:
+> [TECHNIK.md, Abschnitt 2](TECHNIK.md#2-einmalig-sidestore-installieren-windows-pc).
 
 ---
 
@@ -133,13 +140,14 @@ du hast, steht in Whoop Plus ganz unten unter **Mehr**.
 
 **Whoop Plus oder SideStore startet nicht mehr.**
 Wahrscheinlich sind die 7 Tage abgelaufen. **LocalDevVPN** → **Connect**, dann **SideStore** → **My Apps** →
-**Refresh All**. Startet SideStore selbst nicht mehr, muss es noch einmal mit dem PC eingerichtet werden
-(Abschnitt 2, Schritte 3–10). **Deine Whoop-Plus-Daten bleiben dabei erhalten.**
+**Refresh All**. Startet SideStore selbst nicht mehr: am PC den Helfer **WhoopPlus-Setup.exe** wieder starten und
+**SideStore öffnet nicht oder ist abgelaufen** wählen. **Deine Whoop-Plus-Daten bleiben dabei erhalten.**
 
 **SideStore meldet einen Fehler mit „Connection“, „VPN“ oder „Wi-Fi“.**
 WLAN an? **LocalDevVPN** auf **Connect**? Beide Apps einmal ganz schließen und neu öffnen. Hilft das nicht
-(oft nach einem iOS-Update): einmal mit dem PC die „Kopplung erneuern“ – Schritt für Schritt in
-[TECHNIK.md unter „Pairing-Datei ersetzen“](TECHNIK.md#8-fehlerbehebung). Dauert etwa 2 Minuten.
+(oft nach einem iOS-Update): am PC den Helfer wieder starten und **Fehlermeldung zur Verbindung** wählen.
+Er führt dich durch das Erneuern der Kopplung (etwa 2 Minuten). Von Hand:
+[TECHNIK.md unter „Pairing-Datei ersetzen“](TECHNIK.md#8-fehlerbehebung).
 
 **Das Band wird nicht gefunden.**
 Offizielle WHOOP-App schließen, Band laden und näher ans iPhone legen. In **Einstellungen** → **Bluetooth** beim
@@ -152,7 +160,8 @@ bis sie angezeigt wird.
 **Ich bekomme ein neues iPhone.**
 Vorher in Whoop Plus: **Mehr** → **Daten** → **Exportieren** und die Datei z. B. in iCloud Drive sichern
 (oder die neueste Datei aus **Dateien** → **Auf meinem iPhone** → **Whoop Plus** → **Sicherungen** dorthin kopieren). Auf dem
-neuen iPhone alles ab Abschnitt 2 einrichten und die Datei mit **Einspielen** zurückholen.
+neuen iPhone alles ab Abschnitt 2 einrichten (im Helfer: **Ich habe ein neues iPhone**) und die Datei mit
+**Einspielen** zurückholen.
 
 > **Wichtig:** Whoop Plus **nie löschen** – dabei gehen alle gespeicherten Werte verloren. Abgelaufen ist nicht
 > schlimm: verlängern, und alles ist wieder da.

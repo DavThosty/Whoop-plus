@@ -1,0 +1,248 @@
+# Baut den Windows-Einrichtungshelfer (WhoopPlus-Setup.exe) und veröffentlicht ihn als Release "setup-helper".
+# Quelle: tools/windows-setup/ – siehe tools/windows-setup/README.md.
+name: Windows-Einrichtungshelfer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/windows-setup/**'
+      - '.github/workflows/windows-setup.yml'
+  # Pull Requests: nur prüfen und bauen, kein Release.
+  pull_request:
+    paths:
+      - 'tools/windows-setup/**'
+      - '.github/workflows/windows-setup.yml'
+  workflow_dispatch:
+
+# Standard: nur lesen. Nur der Release-Job bekommt Schreibrechte.
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-setup-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TOOL_DIR: tools/windows-setup
+  EXE_NAME: WhoopPlus-Setup.exe
+  ARTIFACT: WhoopPlus-Setup
+  # Feste Modul-Versionen (zuletzt erfolgreich im CI): ein neues Modul ändert den Build nicht unbemerkt.
+  PESTER_VERSION: '5.9.0'
+  PSSA_VERSION: '1.25.0'
+  PS2EXE_VERSION: '1.0.18'
+
+jobs:
+  lint:
+    name: Prüfen (PSScriptAnalyzer, Syntax 5.1)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v6
+
+      - name: PSScriptAnalyzer (bricht nur bei Fehlern ab)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq [version]$env:PSSA_VERSION })) {
+            Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
+          }
+          Import-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION
+          $results = @(Invoke-ScriptAnalyzer -Path $env:TOOL_DIR -Recurse -Settings "$env:TOOL_DIR/PSScriptAnalyzerSettings.psd1")
+          $results | Format-Table -AutoSize Severity, ScriptName, Line, RuleName, Message | Out-String -Width 250
+          foreach ($r in $results) {
+            $file = [System.IO.Path]::GetRelativePath($env:GITHUB_WORKSPACE, $r.ScriptPath) -replace '\\', '/'
+            $level = if ($r.Severity -eq 'Error') { 'error' } else { 'warning' }
+            Write-Output "::$level file=$file,line=$($r.Line)::$($r.RuleName): $($r.Message)"
+          }
+          $errors = @($results | Where-Object Severity -eq 'Error')
+          if ($errors.Count -gt 0) { throw "PSScriptAnalyzer: $($errors.Count) Fehler" }
+
+      - name: Syntax unter Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem $env:TOOL_DIR -Recurse -Include *.ps1, *.psd1) {
+            $tokens = $null; $errors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($e in $errors) {
+              Write-Output "::error file=$($file.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              $failed = $true
+            }
+          }
+          Write-Output "PowerShell $($PSVersionTable.PSVersion)"
+          if ($failed) { exit 1 }
+
+  test:
+    name: Pester (5.1 und 7)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v6
+
+      - name: Pester unter Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$env:PESTER_VERSION })) {
+            $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+            Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
+          $c = New-PesterConfiguration
+          $c.Run.Path = "$env:TOOL_DIR\tests"
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
+
+      - name: Pester unter PowerShell 7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$env:PESTER_VERSION })) {
+            Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
+          $c = New-PesterConfiguration
+          $c.Run.Path = "$env:TOOL_DIR/tests"
+          $c.Run.Exit = $true
+          $c.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $c
+
+  build:
+    name: EXE bauen
+    needs: [lint, test]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v6
+
+      - name: ps2exe installieren
+        shell: powershell
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+          Install-Module ps2exe -RequiredVersion $env:PS2EXE_VERSION -Scope CurrentUser -Force
+          Get-Module -ListAvailable ps2exe | Select-Object Name, Version
+
+      - name: WhoopPlus-Setup.exe bauen
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & "$env:TOOL_DIR\build.ps1" -OutputDir dist -BuildNumber $env:GITHUB_RUN_NUMBER
+          $hash = (Get-FileHash "dist\$env:EXE_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
+          # Format wie sha256sum: "<hash>  <datei>"
+          [System.IO.File]::WriteAllText("$PWD\dist\$env:EXE_NAME.sha256", "$hash  $env:EXE_NAME`n")
+          Get-Content "dist\$env:EXE_NAME.sha256"
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: |
+            dist/${{ env.EXE_NAME }}
+            dist/${{ env.EXE_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  smoke:
+    name: Selbsttest (EXE und Skript)
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v6
+
+      - name: EXE holen
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: dist
+
+      - name: EXE mit -SelfTest (ohne Fenster)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path "dist\$env:EXE_NAME").Path
+          $info = (Get-Item $exe).VersionInfo
+          Write-Output "Version: $($info.FileVersion) / $($info.ProductName) / $($info.FileDescription)"
+          $report = Join-Path $env:RUNNER_TEMP 'selftest-exe.json'
+          $p = Start-Process -FilePath $exe -ArgumentList @('-SelfTest', '-SelfTestReport', "`"$report`"") -PassThru
+          $null = $p.Handle   # damit ExitCode nach dem Ende lesbar bleibt
+          if (-not $p.WaitForExit(180000)) {
+            $p.Kill()
+            throw 'Der Selbsttest der EXE hängt (zeigt sie ein Fenster an?)'
+          }
+          Get-Content "$env:LOCALAPPDATA\WhoopPlusSetup\log.txt" -Tail 40 -ErrorAction SilentlyContinue
+          if (-not (Test-Path $report)) { throw 'Kein Selbsttest-Bericht' }
+          Get-Content $report
+          $result = Get-Content $report -Raw | ConvertFrom-Json
+          if ($p.ExitCode -ne 0 -or -not $result.Ok) { throw "Selbsttest fehlgeschlagen (Exit $($p.ExitCode))" }
+
+      - name: Skript mit -SelfTest unter Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP 'selftest-ps1.json'
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TOOL_DIR\WhoopPlusSetup.ps1" -SelfTest -SelfTestReport $report
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { throw "Selbsttest des Skripts fehlgeschlagen (Exit $code)" }
+
+      - name: Prüfsumme kontrollieren
+        shell: pwsh
+        run: |
+          $expected = (Get-Content "dist/$env:EXE_NAME.sha256" -Raw).Split(' ')[0].Trim()
+          $actual = (Get-FileHash "dist/$env:EXE_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "SHA256 passt nicht: $expected / $actual" }
+          Write-Output "SHA256 ok: $actual"
+
+  release:
+    name: Release "setup-helper" aktualisieren
+    needs: [build, smoke]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: setup-helper
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Code holen (für das Tag)
+        uses: actions/checkout@v6
+
+      - name: EXE holen
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: dist
+
+      - name: Tag verschieben und Release aktualisieren
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c "$EXE_NAME.sha256"
+          HASH=$(cut -d' ' -f1 "$EXE_NAME.sha256")
+          TITLE="Whoop Plus Einrichtungshelfer (Build ${GITHUB_RUN_NUMBER})"
+          NOTES="Windows-Programm, das Schritt für Schritt durch die Einrichtung von SideStore und Whoop Plus führt.
+
+          **Download:** WhoopPlus-Setup.exe herunterladen und doppelklicken.
+          Warnt Windows („Der Computer wurde durch Windows geschützt“): **Weitere Informationen** → **Trotzdem ausführen**.
+
+          Der Helfer fragt nie nach deiner Apple-ID – die Anmeldung passiert nur im Programm iloader.
+          Anleitung: tools/windows-setup/README.md und docs/IOS.md.
+
+          SHA256: \`${HASH}\`
+          Gebaut aus ${GITHUB_SHA::7} am $(date -u '+%Y-%m-%d %H:%M UTC')."
+          git tag -f "$RELEASE_TAG" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$RELEASE_TAG"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$EXE_NAME" "$EXE_NAME.sha256" --clobber
+            gh release edit "$RELEASE_TAG" --title "$TITLE" --notes "$NOTES" --latest=false
+          else
+            gh release create "$RELEASE_TAG" "$EXE_NAME" "$EXE_NAME.sha256" --verify-tag --latest=false --title "$TITLE" --notes "$NOTES"
+          fi

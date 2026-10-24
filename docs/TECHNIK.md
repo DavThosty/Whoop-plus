@@ -95,6 +95,14 @@ Workflow den Block `push:` entfernen, sodass nur `workflow_dispatch` übrig blei
 ## 2. Einmalig: SideStore installieren (Windows-PC)
 
 Der einfache Weg ist der Einrichtungs-Helfer `WhoopPlus-Setup.exe` aus der [Anleitung](ANLEITUNG.md#2-einmal-einrichten).
+Er macht dieselben Schritte wie unten: prüft Windows (64 Bit), installiert bei Bedarf iTunes per winget
+(`Apple.iTunes`, ersatzweise „Apple-Geräte“ aus dem Microsoft Store oder Apples Download-Seite), erkennt das
+iPhone per USB, lädt/aktualisiert iloader aus den GitHub-Releases und zeigt die Klicks in iloader und am iPhone.
+Er merkt sich erledigte iPhone-Schritte und bietet später „SideStore abgelaufen“, „Kopplung erneuern“ und
+„neues iPhone“ an. Bericht: `%LOCALAPPDATA%\WhoopPlusSetup\log.txt`. Quellcode, Build (ps2exe) und Tests:
+[tools/windows-setup](../tools/windows-setup/README.md), Workflow `.github/workflows/windows-setup.yml`,
+Release `setup-helper`.
+
 Hier die Einrichtung von Hand mit iloader:
 
 ### Was du brauchst

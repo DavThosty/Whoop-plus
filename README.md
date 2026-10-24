@@ -42,6 +42,7 @@ https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json
 | `resources` | Quellen für App-Icon und Startbild, Icon der SideStore-Quelle |
 | `scripts/make-source.mjs` | Versionsnummer, „Was ist neu“ aus dem Merge-Commit, SideStore-Quelle (`source.json`) |
 | `.github/workflows/ios.yml` | Baut die IPA, veröffentlicht sie im Release `ios-latest` und in der SideStore-Quelle |
+| `tools/windows-setup` | Windows-Einrichtungshelfer `WhoopPlus-Setup.exe` (Workflow `windows-setup.yml`, Release `setup-helper`) – [Details](tools/windows-setup/README.md) |
 | `docs` | [Anleitung](docs/ANLEITUNG.md), [Technik & Details](docs/TECHNIK.md) und [Protokoll](docs/PROTOCOL.md) |
 
 In der App spricht `WhoopDevice` weiter die Web-Bluetooth-API; `src/ble/capacitor-bluetooth.ts` bildet sie
