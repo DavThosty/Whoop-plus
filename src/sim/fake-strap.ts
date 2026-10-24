@@ -176,6 +176,7 @@ class FakeServer implements BluetoothRemoteGATTServer {
   }
   async connect(): Promise<BluetoothRemoteGATTServer> {
     await delay(this.strap.latency);
+    if (this.strap.hangConnect) return new Promise<never>(() => {}); // außer Reichweite: hängt ewig
     this.strap.onConnect();
     return this;
   }
@@ -226,6 +227,15 @@ export class FakeStrap {
   alarmAt: number | null = null;
   hapticsRuns = 0;
   realtimePacketsSent = 0;
+  // Fehlerinjektion für Tests:
+  /** gatt.connect() kehrt nie zurück (wie CoreBluetooth bei einem Band außer Reichweite). */
+  hangConnect = false;
+  /** Writes mit diesen Opcodes kehren nie zurück. */
+  hangWriteOpcodes = new Set<number>();
+  /** Datensatz mit diesem Index (ab historyStart) bekommt ein unbekanntes Layout (99). */
+  corruptRecordIndex: number | null = null;
+  /** SEND_HISTORICAL_DATA wird bestätigt, aber es kommen keine Daten. */
+  ignoreHistoryRequests = false;
   stdHrPacketsSent = 0;
   realtimeOn = false;
   /** Banduhr = now() + clockOffsetMs. Startet ungestellt (1970). */
@@ -329,6 +339,7 @@ export class FakeStrap {
 
   onConnect(): void {
     this.connected = true;
+    this.writeBusy = false;
     this.asm.reset();
   }
 
@@ -386,6 +397,10 @@ export class FakeStrap {
       throw e;
     }
     this.writeBusy = true;
+    if (this.hangWriteOpcodes.has(bytes[6]!)) {
+      this.received.push({ opcode: bytes[6]!, seq: bytes[5]!, payload: [] });
+      return new Promise<never>(() => {}); // writeBusy bleibt gesetzt bis zum Verbindungsabbau
+    }
     try {
       if (!this.firstWriteDone) {
         this.firstWriteDone = true;
@@ -459,6 +474,7 @@ export class FakeStrap {
       case Opcode.SEND_HISTORICAL_DATA:
         // (Neu-)Start ab dem ältesten unbestätigten Datensatz.
         ok();
+        if (this.ignoreHistoryRequests) return;
         this.streaming = true;
         this.awaiting = null;
         setTimeout(() => {
@@ -534,7 +550,13 @@ export class FakeStrap {
     const from = this.cursor;
     const to = Math.min(total, from + this.opts.batchSize);
     const samples = this.samples(from, to);
-    const frames = samples.map((s, i) => encodeHistoryV24(s, 0x9b000 + from + i));
+    const frames = samples.map((s, i) => {
+      const f = encodeHistoryV24(s, 0x9b000 + from + i);
+      if (from + i !== this.corruptRecordIndex) return f;
+      const inner = f.slice(4, f.length - 4);
+      inner[1] = 99; // unbekannte Layout-Version
+      return buildFrame(inner);
+    });
     const token = Uint8Array.from([...u32(this.page), ...u32(this.wrap)]);
     frames.push(this.sendMeta(MetadataType.HISTORY_END, frames.length, token));
     const stream = concat(frames);

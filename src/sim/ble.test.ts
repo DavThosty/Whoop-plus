@@ -199,7 +199,7 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     expect(strap.cursor).toBe(1500);
     expect(strap.batchesSent).toBe(3);
     const last = ev.sync.at(-1)!;
-    expect(last).toEqual({ records: 1500, newestTs: START + 1499, done: true });
+    expect(last).toEqual({ records: 1500, newestTs: START + 1499, done: true, ok: true });
     expect(ev.sync[0]).toEqual({ records: 0, newestTs: null, done: false });
     expect(ev.states).toContain('syncing');
     expect(dev.state).toBe('connected');
@@ -225,7 +225,8 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     expect(strap.cursor).toBe(600);
     await until(() => strap.received.some((c) => c.opcode === Opcode.ABORT_HISTORICAL_TRANSMITS));
     expect(dev.state).toBe('connected');
-    expect(ev.sync.at(-1)!.done).toBe(true);
+    expect(ev.sync.at(-1)).toMatchObject({ done: true, ok: false });
+    expect(ev.sync.at(-1)!.error).toMatch(/Quota exceeded/);
 
     const n = await dev.syncHistory();
     expect(n).toBe(900);
@@ -283,6 +284,86 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     expect(await dev.syncHistory()).toBe(1500);
     expect(new Set(stored.map((r) => r.ts)).size).toBe(1500);
     assertSafe(strap);
+  });
+
+  it('gatt.connect() hängt → Zeitüberschreitung, Zustand disconnected, erneuter connect() möglich', async () => {
+    const { dev, strap, ev } = setup({}, undefined, { connectTimeoutMs: 150 });
+    strap.hangConnect = true;
+    await expect(dev.connect()).rejects.toThrow(/nicht erreichbar/);
+    expect(dev.state).toBe('disconnected');
+    expect(ev.errors.some((e) => /Zeitüberschreitung beim Verbinden/.test(e.message))).toBe(true);
+    // reconnect() gegen ein Band außer Reichweite bleibt nicht in 'connecting' hängen
+    expect(await dev.reconnect()).toBe(false);
+    expect(dev.state).toBe('disconnected');
+    strap.hangConnect = false;
+    await dev.connect();
+    expect(dev.state).toBe('connected');
+  });
+
+  it('disconnect() bricht einen hängenden Verbindungsaufbau sofort ab', async () => {
+    const { dev, strap } = setup({}, undefined, { connectTimeoutMs: 60_000 });
+    strap.hangConnect = true;
+    const p = dev.connect().then(
+      () => null,
+      (e: Error) => e,
+    );
+    await until(() => dev.state === 'connecting');
+    await sleep(20);
+    await dev.disconnect();
+    expect(dev.state).toBe('disconnected');
+    expect(await p).toBeInstanceOf(Error);
+  });
+
+  it('erster Write (Kopplung) hängt → Zeitüberschreitung, Verbindung abgebaut', async () => {
+    const { dev, strap } = setup({}, undefined, { firstWriteTimeoutMs: 150, writeTimeoutMs: 50 });
+    strap.hangWriteOpcodes.add(Opcode.GET_BATTERY_LEVEL);
+    await expect(dev.connect()).rejects.toThrow(/Keine Antwort vom Band/);
+    expect(dev.state).toBe('disconnected');
+    expect(strap.connected).toBe(false);
+  });
+
+  it('Ack-Write hängt während des Syncs → Sync scheitert, Zustand disconnected', async () => {
+    const { dev, strap, ev, stored } = setup({}, undefined, { writeTimeoutMs: 150 });
+    await dev.connect();
+    strap.hangWriteOpcodes.add(Opcode.HISTORICAL_DATA_RESULT);
+    await expect(dev.syncHistory()).rejects.toThrow(/hängt/);
+    await until(() => dev.state === 'disconnected');
+    expect(stored).toHaveLength(600); // gespeichert, aber nicht bestätigt → kommt erneut
+    expect(strap.cursor).toBe(0);
+    expect(ev.sync.at(-1)).toMatchObject({ done: true, ok: false });
+  });
+
+  it('unbekanntes Datensatz-Layout → kein Ack, Abbruch, Daten bleiben auf dem Band', async () => {
+    const { dev, strap, ev, stored } = setup();
+    strap.corruptRecordIndex = 700; // im zweiten Block
+    await dev.connect();
+    await expect(dev.syncHistory()).rejects.toThrow(/Unbekanntes Datenformat \(Layout 99/);
+    expect(strap.acks).toHaveLength(1); // nur der erste, fehlerfreie Block
+    expect(strap.cursor).toBe(600);
+    expect(stored).toHaveLength(600);
+    expect(ev.errors.some((e) => /Daten bleiben auf dem Band/.test(e.message))).toBe(true);
+    await until(() => strap.received.some((c) => c.opcode === Opcode.ABORT_HISTORICAL_TRANSMITS));
+    expect(ev.sync.at(-1)).toMatchObject({ done: true, ok: false });
+    assertSafe(strap);
+  });
+
+  it('Echtzeitpakete mit ungestellter Banduhr bekommen die Telefonzeit', async () => {
+    const { dev, strap, ev } = setup({ ignoreSetClock: true });
+    await dev.connect();
+    await dev.setRealtimeHr(true);
+    await until(() => ev.live.length >= 3);
+    expect(strap.clockOffsetMs).toBeLessThan(-1e12); // Band steht auf 1970
+    for (const l of ev.live) expect(Math.abs(l.ts - Date.now() / 1000)).toBeLessThan(5);
+    expect(ev.logs.filter((l) => l.includes('Uhrzeit des Telefons'))).toHaveLength(1);
+  });
+
+  it('Band antwortet nicht auf die Verlaufsanfrage → Fehler, ok: false', async () => {
+    const { dev, strap, ev } = setup({}, undefined, { syncIdleTimeoutMs: 100 });
+    await dev.connect();
+    strap.ignoreHistoryRequests = true;
+    await expect(dev.syncHistory()).rejects.toThrow(/Keine Verlaufsdaten/);
+    expect(ev.sync.at(-1)).toMatchObject({ done: true, ok: false });
+    expect(dev.state).toBe('connected');
   });
 
   it('reconnect() ohne getDevices → false', async () => {

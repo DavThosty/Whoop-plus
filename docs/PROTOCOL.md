@@ -102,8 +102,9 @@ keine RR-Werte. Akzeptiert werden RR zwischen 200 und 2500 ms.
 | `[29:31]` | u16 grüner PPG-Rohwert |
 | `[36:48]` | 3 × f32 Schwerkraftvektor in g (liest ~4,6 % zu hoch; `[52:64]` ist eine Kopie) |
 
-Länge: v24 ≥ 89 Byte, manche v12 senden 88; Mindestlänge für HR/RR 72 Byte. v25 (roher PPG-Burst,
-ohne HR) wird übersprungen. Bei v7/v18 ist nur die HR-Position belegt; RR werden dort nicht gelesen
+Länge: v24 ≥ 89 Byte, manche v12 senden 88; Mindestlänge für HR/RR 72 Byte. Nur v25 (roher PPG-Burst,
+ohne HR) wird übersprungen. Enthält ein Block ein unbekanntes Layout oder einen zu kurzen Datensatz,
+wird er **nicht** bestätigt und der Sync abgebrochen – die Daten bleiben auf dem Band. Bei v7/v18 ist nur die HR-Position belegt; RR werden dort nicht gelesen
 und die Schwerkraft nur bei plausiblem Betrag (0,5–1,8 g) übernommen. Datensätze mit Zeitstempel vor
 2020 (Banduhr nicht gestellt) werden verworfen.
 
@@ -140,6 +141,10 @@ IDs: 3 BATTERY_LEVEL (Body: `[0]` Rev. 2, `[1]` u16 Ladezustand×10, `[5]` u16 m
    (erneutes Init mitten im Offload stoppte laut NOOP die Übertragung).
 6. Optional Standard-HR 0x2A37 abonnieren (nur Zweitquelle, solange Echtzeit aus ist).
 7. LINK_VALID alle 10 s, Verlaufs-Sync sofort und alle 15 min.
+
+Zeitlimits: `gatt.connect()` 20 s (CoreBluetooth bricht selbst nie ab), erster Write 30 s, jeder
+weitere Write/GATT-Schritt 10 s. Bei Überschreitung wird die Verbindung abgebaut. Echtzeitpakete, deren
+Banduhr mehr als 120 s abweicht, bekommen die Telefonzeit.
 
 Alle Writes laufen seriell über eine Warteschlange (Web Bluetooth erlaubt keine parallelen
 GATT-Operationen), bevorzugt mit `writeValueWithResponse`.
