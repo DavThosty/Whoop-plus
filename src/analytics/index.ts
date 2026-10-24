@@ -8,3 +8,5 @@ export * from './calories';
 export * from './recovery';
 export * from './daily';
 export * from './explain';
+export * from './recommend';
+export * from './workout';

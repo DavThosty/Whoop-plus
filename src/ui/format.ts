@@ -78,3 +78,80 @@ export function recoveryColor(v: number | null | undefined): string {
 }
 
 export const ZONE_COLORS = ['#7ba1bb', '#0093e7', '#16ec06', '#ffde00', '#ff0026'];
+
+/** Farben als Hex (für SVG-Verläufe und Glow). */
+export const COLORS = {
+  green: '#16ec06',
+  yellow: '#ffde00',
+  red: '#ff0026',
+  blue: '#0093e7',
+  sleep: '#8db4d2',
+  hr: '#ff4d6d',
+  neutral: '#6d8299',
+} as const;
+
+export function recoveryHex(v: number | null | undefined): string {
+  if (v == null) return COLORS.neutral;
+  if (v >= 67) return COLORS.green;
+  if (v >= 34) return COLORS.yellow;
+  return COLORS.red;
+}
+
+/** Zustandstext der Recovery wie „Gut erholt“ oder „Kalibrierung 2/4“. */
+export function recoveryState(
+  day: { recovery: number | null; baselineNights: number; sleep: unknown } | null | undefined,
+): string {
+  if (!day) return 'Noch keine Daten';
+  const v = day.recovery;
+  if (v == null) {
+    if (day.baselineNights < 4) return `Kalibrierung ${Math.min(day.baselineNights, 4)}/4`;
+    return day.sleep ? 'Keine HRV-Messung' : 'Kein Schlaf erkannt';
+  }
+  if (v >= 67) return 'Gut erholt';
+  if (v >= 34) return 'Mittlere Erholung';
+  return 'Niedrige Erholung';
+}
+
+/** Farbe für „unter Zone 1“. */
+export const ZONE0_COLOR = '#4f6377';
+export const ZONE_NAMES = ['Locker', 'Zone 1 · Aufwärmen', 'Zone 2 · Grundlage', 'Zone 3 · Aerob', 'Zone 4 · Schwelle', 'Zone 5 · Maximal'];
+
+export function zoneColor(z: number): string {
+  return z >= 1 && z <= 5 ? ZONE_COLORS[z - 1]! : ZONE0_COLOR;
+}
+
+/** Minuten seit Mitternacht als „22:45“. */
+export function clockMin(minutesOfDay: number): string {
+  const m = ((Math.round(minutesOfDay) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/** Sekunden als „1:02:03“ bzw. „12:03“. */
+export function hms(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`;
+}
+
+/** Hex-Farbe mit Weiß mischen (amount 0–1). */
+export function lighten(hex: string, amount: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c: number) => Math.round(c + (255 - c) * amount);
+  const r = mix((n >> 16) & 255), g = mix((n >> 8) & 255), b = mix(n & 255);
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+
+/** Hex-Farbe abdunkeln (amount 0–1). */
+export function darken(hex: string, amount: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c: number) => Math.round(c * (1 - amount));
+  const r = mix((n >> 16) & 255), g = mix((n >> 8) & 255), b = mix(n & 255);
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+
+export function longDate(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+}

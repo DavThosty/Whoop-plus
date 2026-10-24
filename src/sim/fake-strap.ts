@@ -53,6 +53,8 @@ export interface FakeStrapOptions {
   ignoreSetClock?: boolean;
   utcOffsetMin?: number;
   now?: () => number;
+  /** Zielpuls für Echtzeitpakete (bpm). Ohne Angabe liefert die Simulation einen natürlichen Tagesverlauf. */
+  liveHrTarget?: number;
 }
 
 export interface ReceivedCommand {
@@ -209,7 +211,7 @@ class FakeDevice extends Emitter implements BluetoothDevice {
 
 /** Zustand und Verhalten des simulierten Bands (für Tests einsehbar). */
 export class FakeStrap {
-  readonly opts: Required<Omit<FakeStrapOptions, 'start' | 'utcOffsetMin' | 'historySeconds' | 'days' | 'growing'>>;
+  readonly opts: Required<Omit<FakeStrapOptions, 'start' | 'utcOffsetMin' | 'historySeconds' | 'days' | 'growing' | 'liveHrTarget'>>;
   readonly device: FakeDevice;
   readonly services = new Map<string, FakeService>();
   connected = false;
@@ -226,6 +228,11 @@ export class FakeStrap {
   batchesSent = 0;
   alarmAt: number | null = null;
   hapticsRuns = 0;
+  /** Parameter der empfangenen RUN_HAPTICS_PATTERN-Kommandos [Muster, Wiederholungen]. */
+  readonly hapticsPatterns: [number, number][] = [];
+  /** Zielpuls der Echtzeitpakete (bpm); null = natürlicher Verlauf. Zur Laufzeit änderbar (Demo/Tests). */
+  liveHrTarget: number | null = null;
+  private liveHrValue = 0;
   realtimePacketsSent = 0;
   // Fehlerinjektion für Tests:
   /** gatt.connect() kehrt nie zurück (wie CoreBluetooth bei einem Band außer Reichweite). */
@@ -290,6 +297,7 @@ export class FakeStrap {
     this.historyEndFixed = growing ? null : this.historyStart + duration;
     this.clockOffsetMs = -now(); // RTC steht auf 1970
     this.wrap = mulberry32(this.opts.seed)() < 0.5 ? 3 : 4;
+    this.liveHrTarget = o.liveHrTarget ?? null;
     const synthOpts = { seed: this.opts.seed, ...(o.utcOffsetMin !== undefined ? { utcOffsetMin: o.utcOffsetMin } : {}) };
     this.histSynth = new PhysiologySynth(this.historyStart, synthOpts);
     this.synthOpts = synthOpts;
@@ -504,6 +512,7 @@ export class FakeStrap {
         return ok([1]);
       case Opcode.RUN_HAPTICS_PATTERN:
         this.hapticsRuns++;
+        this.hapticsPatterns.push([payload[0] ?? 0, payload[1] ?? 0]);
         return ok();
       case Opcode.SET_GENERIC_HR_PROFILE:
         return ok();
@@ -618,7 +627,7 @@ export class FakeStrap {
     this.liveSynth = new PhysiologySynth(Math.floor(this.opts.now() / 1000), this.synthOpts);
     this.realtimeTimer = setInterval(() => {
       if (!this.connected || !this.liveSynth) return;
-      const s = this.liveSynth.next();
+      const s = this.liveSample(this.liveSynth.next());
       const t = this.strapTime();
       const inner = new Uint8Array(20);
       const v = new DataView(inner.buffer);
@@ -634,6 +643,20 @@ export class FakeStrap {
       this.realtimePacketsSent++;
       this.deliver(this.chars.data, buildFrame(inner));
     }, this.opts.realtimeIntervalMs);
+  }
+
+  /** Überschreibt den simulierten Puls, wenn ein Zielpuls gesetzt ist (nähert sich ihm in wenigen Sekunden). */
+  private liveSample(s: SynthSample): SynthSample {
+    const target = this.liveHrTarget;
+    if (target == null || !(target > 0)) {
+      this.liveHrValue = s.hr;
+      return s;
+    }
+    const prev = this.liveHrValue || s.hr;
+    const jitter = (s.hr % 3) - 1; // deterministisches leichtes Zittern
+    const hr = Math.round(Math.min(220, Math.max(30, prev + (target - prev) * 0.35 + jitter * 0.6)));
+    this.liveHrValue = hr;
+    return { ...s, hr, rr: [Math.round(60000 / hr)] };
   }
 
   private stopRealtime(): void {

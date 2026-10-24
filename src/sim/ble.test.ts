@@ -406,6 +406,38 @@ describe('WhoopDevice gegen das simulierte Band', () => {
     assertSafe(strap);
   });
 
+  it('Kurzer Haptik-Impuls sendet nur RUN_HAPTICS_PATTERN (kein RUN_ALARM)', async () => {
+    const { dev, strap } = setup();
+    await dev.connect();
+    const before = strap.received.length;
+    await dev.haptic();
+    await dev.haptic(3, 2);
+    expect(strap.hapticsRuns).toBe(2);
+    expect(strap.hapticsPatterns).toEqual([[2, 1], [3, 2]]);
+    // Herzschlag-Kommandos laufen parallel – nur Haptik/Alarm betrachten.
+    const ops = strap.received
+      .slice(before)
+      .map((c) => c.opcode)
+      .filter((op) => op === Opcode.RUN_HAPTICS_PATTERN || op === Opcode.RUN_ALARM);
+    expect(ops).toEqual([Opcode.RUN_HAPTICS_PATTERN, Opcode.RUN_HAPTICS_PATTERN]);
+    expect(ops).not.toContain(Opcode.RUN_ALARM);
+    await dev.disconnect();
+    await expect(dev.haptic()).rejects.toThrow(/Nicht verbunden/);
+    assertSafe(strap);
+  });
+
+  it('Simulierter Echtzeitpuls folgt einem Zielpuls', async () => {
+    const { dev, strap, ev } = setup({ liveHrTarget: 150 });
+    await dev.connect();
+    await dev.setRealtimeHr(true);
+    await until(() => ev.live.length >= 15, 3000);
+    expect(ev.live.at(-1)!.hr).toBeGreaterThan(140);
+    strap.liveHrTarget = 100;
+    const n = ev.live.length;
+    await until(() => ev.live.length >= n + 15, 3000);
+    expect(ev.live.at(-1)!.hr).toBeLessThan(110);
+  });
+
   it('Kopplungsdialog: langer erster Write wird abgewartet', async () => {
     const { dev } = setup({ bondDelayMs: 300 }, undefined, { commandTimeoutMs: 100 });
     await dev.connect();
