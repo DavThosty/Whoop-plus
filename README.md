@@ -7,6 +7,7 @@ Strain und Kalorien **lokal auf dem iPhone** mit nachvollziehbaren Formeln.
 Die App ist eine native iOS-App (Capacitor). Sie wird von GitHub Actions gebaut und kostenlos mit
 **SideStore** und einer normalen Apple-ID installiert – ohne Mac und ohne bezahlten Entwickler-Account.
 Schritt-für-Schritt-Anleitung: **[docs/IOS.md](docs/IOS.md)**.
+Unter Windows hilft der **[Einrichtungshelfer](https://github.com/DavThosty/Whoop-plus/releases/download/setup-helper/WhoopPlus-Setup.exe)** (WhoopPlus-Setup.exe) Schritt für Schritt – siehe [tools/windows-setup](tools/windows-setup/README.md).
 
 ## Funktionen
 

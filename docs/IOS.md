@@ -47,6 +47,20 @@ Workflow den Block `push:` entfernen, sodass nur `workflow_dispatch` übrig blei
 
 ## 2. Einmalig: SideStore installieren (Windows-PC)
 
+### Am einfachsten: Einrichtungshelfer herunterladen
+
+Ein kleines Windows-Programm führt dich durch alle Schritte dieses Kapitels. Es installiert, was auf dem PC
+fehlt, und zeigt dir genau, was du am iPhone tippen musst.
+
+1. Herunterladen: <https://github.com/DavThosty/Whoop-plus/releases/download/setup-helper/WhoopPlus-Setup.exe>
+2. Doppelklick auf **WhoopPlus-Setup.exe**.
+3. Erscheint „Der Computer wurde durch Windows geschützt“: **Weitere Informationen** → **Trotzdem ausführen**.
+4. **Los geht's** klicken und den Anweisungen folgen.
+
+Deine Apple-ID gibst du nur im Programm iloader ein – der Helfer fragt nie danach. Später (SideStore abgelaufen,
+Fehler nach einem iOS-Update, neues iPhone) einfach wieder starten. Mehr dazu:
+[tools/windows-setup/README.md](../tools/windows-setup/README.md). Ohne Helfer geht es wie folgt von Hand.
+
 ### Was du brauchst
 
 - iPhone mit **iOS 15.0 oder neuer** und gesetztem **Gerätecode**
