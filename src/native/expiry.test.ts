@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  ExpiryWatch, formatExpiry, planReminders, REMINDER_BODY, REMINDER_IDS, REMINDER_TITLE, shouldShowBanner, type ExpiryDeps, type NotifPermission,
+  ExpiryWatch, formatExpiry, MAX_PERMISSION_ASKS, planReminders, REMINDER_BODY, REMINDER_IDS, REMINDER_TITLE, shouldShowBanner, type ExpiryDeps, type NotifPermission,
 } from './expiry';
 
 const H = 3600_000;
@@ -20,6 +20,7 @@ function setup(opts: { expiry?: string | null; perm?: NotifPermission } = {}) {
     requestPermission: vi.fn(async (): Promise<NotifPermission> => (perm = 'granted')),
     schedule: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
+    openSettings: vi.fn(async () => {}),
     storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v) },
     log: vi.fn(),
   };
@@ -112,13 +113,39 @@ describe('ExpiryWatch', () => {
     expect(w.state.askPermission).toBe(false);
   });
 
-  it('„Nein“ im Erklär-Sheet: nicht erneut fragen', async () => {
+  it('Schließen = später fragen: bei späteren Verbindungen erneut, höchstens dreimal', async () => {
+    const t = setup({ perm: 'prompt' });
+    let shown = 0;
+    for (let i = 0; i < 5; i++) {
+      const w = new ExpiryWatch(t.deps); // auch über App-Neustarts hinweg
+      await w.onConnected();
+      if (w.state.askPermission) shown++;
+      w.askLater();
+      expect(w.state.askPermission).toBe(false);
+    }
+    expect(shown).toBe(MAX_PERMISSION_ASKS);
+    expect(t.deps.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('„Erinnerungen aktivieren“ in Mehr: fragt bzw. öffnet die Einstellungen, wenn abgelehnt', async () => {
     const t = setup({ perm: 'prompt' });
     const w = new ExpiryWatch(t.deps);
-    await w.onConnected();
-    w.declinePermission();
-    await new ExpiryWatch(t.deps).onConnected();
-    expect(t.deps.requestPermission).not.toHaveBeenCalled();
+    await w.refresh();
+    expect(w.state.permission).toBe('prompt');
+    await w.enableReminders();
+    expect(t.deps.requestPermission).toHaveBeenCalledTimes(1);
+    expect(w.state.permission).toBe('granted');
+    expect(t.deps.schedule).toHaveBeenCalledTimes(1);
+
+    const d = setup({ perm: 'denied' });
+    const w2 = new ExpiryWatch(d.deps);
+    await w2.enableReminders();
+    expect(d.deps.openSettings).toHaveBeenCalledTimes(1);
+    expect(d.deps.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it('Erinnerungstext nennt „falls noch nicht geschehen“', () => {
+    expect(REMINDER_BODY).toBe('Öffne SideStore und tippe auf Aktualisieren (falls noch nicht geschehen) – dauert 10 Sekunden.');
   });
 
   it('bereits entschieden (granted/denied): kein Sheet', async () => {

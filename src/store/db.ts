@@ -201,8 +201,11 @@ export interface BackupFile {
   samples: PackedSample[];
 }
 
-/** Erzeugt ein Backup als Blob. Rohdaten werden blockweise gelesen, um den Speicher zu schonen. */
-export async function exportBackup(): Promise<Blob> {
+/**
+ * Erzeugt ein Backup stückweise (JSON-Text in Teilen). Rohdaten werden blockweise gelesen; wer die Teile
+ * direkt in eine Datei schreibt, muss nie die ganze Sicherung im Speicher halten.
+ */
+export async function* exportBackupParts(): AsyncGenerator<string> {
   const d = await db();
   const kv: Record<string, unknown> = {};
   let cursor = await d.transaction('kv').store.openCursor();
@@ -212,9 +215,7 @@ export async function exportBackup(): Promise<Blob> {
   }
   const days = await d.getAll('days');
   const workouts = await d.getAll('workouts');
-  const parts: string[] = [
-    `{"app":"whoop-plus","version":1,"exportedAt":${Date.now()},"kv":${JSON.stringify(kv)},"days":${JSON.stringify(days)},"workouts":${JSON.stringify(workouts)},"samples":[`,
-  ];
+  yield `{"app":"whoop-plus","version":1,"exportedAt":${Date.now()},"kv":${JSON.stringify(kv)},"days":${JSON.stringify(days)},"workouts":${JSON.stringify(workouts)},"samples":[`;
   let from = -Infinity;
   let first = true;
   for (;;) {
@@ -225,11 +226,17 @@ export async function exportBackup(): Promise<Blob> {
       r.ts, r.hr, r.rr, r.grav?.[0] ?? null, r.grav?.[1] ?? null, r.grav?.[2] ?? null, r.src === 'live' ? 1 : 0,
     ]);
     const json = JSON.stringify(packed);
-    parts.push((first ? '' : ',') + json.slice(1, -1));
+    yield (first ? '' : ',') + json.slice(1, -1);
     first = false;
     from = chunk[chunk.length - 1].ts;
   }
-  parts.push(']}');
+  yield ']}';
+}
+
+/** Erzeugt ein Backup als Blob (für „Exportieren“). */
+export async function exportBackup(): Promise<Blob> {
+  const parts: string[] = [];
+  for await (const p of exportBackupParts()) parts.push(p);
   return new Blob(parts, { type: 'application/json' });
 }
 

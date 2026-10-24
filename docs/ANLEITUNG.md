@@ -119,9 +119,9 @@ du hast, steht in Whoop Plus ganz unten unter **Mehr**.
   wurde, steht in Whoop Plus unter **Mehr** → **Daten**. Dort kannst du die neueste Sicherung auch mit einem
   Tipp wieder einspielen.
 - **Die App erinnert dich rechtzeitig, falls du verlängern musst.** Nach dem ersten Verbinden mit dem Band
-  fragt sie einmal, ob sie dir Mitteilungen schicken darf – bitte **Ja** und dann **Erlauben** tippen.
-  Einen Tag und drei Stunden vor Ablauf kommt dann: „Whoop Plus läuft bald ab – Öffne SideStore und tippe auf
-  Aktualisieren“. Bis wann die App gerade gültig ist, steht unter **Mehr**. Hast du schon verlängert (z. B.
+  fragt sie, ob sie dir Mitteilungen schicken darf – bitte **Ja, erinnern** und dann **Erlauben** tippen.
+  (Verpasst? Unter **Mehr** → **Erinnerungen aktivieren**.) Einen Tag und drei Stunden vor Ablauf kommt dann:
+  „Whoop Plus läuft bald ab – Öffne SideStore und tippe auf Aktualisieren (falls noch nicht geschehen)“. Bis wann die App gerade gültig ist, steht unter **Mehr**. Hast du schon verlängert (z. B.
   automatisch über den Kurzbefehl), kannst du die Erinnerung einfach antippen – die App merkt es sich dann.
 
 > Die Sicherungen liegen in der App. Wird Whoop Plus gelöscht, sind sie mit weg – für einen Umzug die neueste

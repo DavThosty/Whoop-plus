@@ -68,7 +68,7 @@ export function AppValidity() {
 }
 
 function AppValidityInner(props: { watch: ExpiryWatch }) {
-  const exp = useSelect(props.watch, (x) => x.expiresAt);
+  const { exp, permission } = useSelect(props.watch, (x) => ({ exp: x.expiresAt, permission: x.permission }));
   if (exp == null) return null;
   const soon = exp - Date.now() < 48 * 3600_000;
   return (
@@ -77,9 +77,19 @@ function AppValidityInner(props: { watch: ExpiryWatch }) {
         <span class="ico" style={{ color: soon ? 'var(--yellow)' : 'var(--text-2)' }}><Icon name="alarm" /></span>
         <div class="grow">
           <div style={{ fontWeight: 600 }}>App gültig bis {formatExpiry(exp)}</div>
-          <div class="small faint">Verlängern in SideStore („Aktualisieren“). Die App erinnert dich rechtzeitig.</div>
+          <div class="small faint">
+            Verlängern in SideStore („Aktualisieren“).{permission === 'granted' ? ' Die App erinnert dich rechtzeitig.' : ''}
+          </div>
         </div>
       </div>
+      {permission != null && permission !== 'granted' && (
+        <div style={{ marginTop: 12 }}>
+          <button class="btn small" onClick={() => void props.watch.enableReminders()}>
+            <Icon name="alarm" /> Erinnerungen aktivieren
+          </button>
+          {permission === 'denied' && <div class="small faint" style={{ marginTop: 6 }}>Öffnet die iOS-Einstellungen → Mitteilungen erlauben.</div>}
+        </div>
+      )}
     </GlassCard>
   );
 }
@@ -116,7 +126,7 @@ function NotifPermissionSheetInner(props: { watch: ExpiryWatch }) {
   const ask = useSelect(props.watch, (x) => x.askPermission);
   if (!ask) return null;
   return (
-    <Sheet title="Erinnerung ans Verlängern" onClose={() => props.watch.declinePermission()}>
+    <Sheet title="Erinnerung ans Verlängern" onClose={() => props.watch.askLater()}>
       <p>Whoop Plus muss alle 7 Tage in SideStore verlängert werden – darf die App dich einen Tag vorher daran erinnern?</p>
       <div class="btns">
         <button class="btn primary" onClick={() => void props.watch.acceptPermission()}><Icon name="check" /> Ja, erinnern</button>

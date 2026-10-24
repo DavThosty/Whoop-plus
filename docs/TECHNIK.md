@@ -444,20 +444,34 @@ auch gelegentlich ohne erkennbaren Grund)
 
 ### Tägliche Sicherung (`src/native/backup.ts`, verdrahtet in `src/native/index.ts`)
 
-- Nur in der nativen App. Inhalt = dieselbe JSON-Sicherung wie „Exportieren“ (`exportBackup()` in
-  `src/store/db.ts`), blockweise (2 MB) per `@capacitor/filesystem` geschrieben nach
-  `Documents/Sicherungen/WhoopPlus-Sicherung-JJJJ-MM-TT.json` (lokales Datum; gleicher Tag = überschreiben).
-- Es bleiben die **7 neuesten** Dateien dieses Namensmusters; andere Dateien im Ordner werden nie angefasst.
-- Auslöser: App-Start, Rückkehr in die App, jede Zustandsänderung von App und Workout (also auch direkt nach
-  einem Sync). Gesichert wird nur, wenn die letzte Sicherung **älter als 20 h** ist und gerade **Ruhe** ist:
-  kein Verbindungsaufbau, kein Sync, keine Auswertung, kein laufendes Workout, keine Demo, Daten vorhanden.
-  Zeitpunkt und Dateiname stehen im IndexedDB-KV (`autoBackup`), damit ein Neustart nicht doppelt sichert.
-- Fehler: nur Protokoll (*Mehr → Protokoll*) und eine leise Zeile unter *Mehr → Daten*; nächster Versuch
-  beim nächsten Auslöser.
+- Nur in der nativen App. Inhalt = dieselbe JSON-Sicherung wie „Exportieren“, aber **gestreamt**:
+  `exportBackupParts()` in `src/store/db.ts` liefert den JSON-Text in Teilen (Rohdaten in Blöcken zu 20 000),
+  die in ~2-MB-Stücken per `@capacitor/filesystem` angehängt werden – die Sicherung liegt nie komplett im
+  Speicher. Ziel: `Documents/Sicherungen/WhoopPlus-Sicherung-JJJJ-MM-TT.json` (lokales Datum).
+- **Atomar:** geschrieben wird zuerst `<name>.tmp`, erst danach umbenannt (eine vorhandene Datei vom selben
+  Tag wird unmittelbar vorher gelöscht, weil `rename` unter iOS nicht überschreibt). Bricht das Schreiben ab,
+  wird die `.tmp` gelöscht; liegengebliebene `.tmp` werden beim Start weggeräumt.
+- **Aufbewahrung:** die **7 neuesten** Dateien **plus immer die größte**. Ist die neue Sicherung kleiner als
+  die Hälfte der bisher neuesten, wird gar nicht aufgeräumt (Protokoll-Hinweis). Wäre eine Datei vom selben
+  Tag, die zugleich die größte ist, durch eine verdächtig kleine zu ersetzen, wird die neue daneben als
+  `…-2.json` abgelegt. Andere Dateien im Ordner werden nie angefasst.
+- **Zeitpunkt:** nur wenn die letzte Sicherung **älter als 20 h** ist und die App **60 s ununterbrochen ruhig**
+  war (kein Verbindungsaufbau, kein Sync, keine Auswertung, kein Workout, keine Demo, Daten vorhanden) – direkt
+  vor dem Start wird erneut geprüft. Jede Zustandsänderung stößt die Prüfung an (also typischerweise eine
+  Minute nach Ende von Sync + Auswertung); bei Rückkehr in die App beginnt die Wartezeit neu, damit die
+  Sicherung nie direkt vor dem automatischen Verbinden + Sync startet.
+- **Absturzschutz:** Vor dem Export wird im IndexedDB-KV (`autoBackup`) ein Versuchs-Vermerk gespeichert und
+  nach Erfolg oder Fehler entfernt. Steht er beim nächsten Start noch da (App abgestürzt oder beendet), wird
+  bis zum nächsten Kalendertag ausgesetzt und das im Protokoll vermerkt. Freier Speicherplatz wird nicht
+  vorab geprüft (dafür gibt es in Capacitor keine günstige Abfrage); ein volles Gerät führt zu einem normalen
+  Fehler, die vorhandenen Sicherungen bleiben unberührt.
+- **Fehler:** nur Protokoll (*Mehr → Protokoll*) und eine leise Zeile unter *Mehr → Daten*; nächster Versuch
+  frühestens nach einer Stunde.
 - Sichtbar in der Dateien-App durch `UIFileSharingEnabled` und `LSSupportsOpeningDocumentsInPlace` in
   `ios/App/App/Info.plist` („Auf meinem iPhone → Whoop Plus“; der Ordner erscheint nach der ersten Sicherung).
-- *Mehr → Daten → „Neueste Sicherung einspielen“* liest die neueste Datei über `Filesystem.readFile` und
-  übergibt sie dem normalen Import.
+- *Mehr → Daten → „Neueste Sicherung einspielen“* lädt die Datei über `Filesystem.getUri` +
+  `fetch(Capacitor.convertFileSrc(uri))` (WebView-Dateiserver statt eines riesigen Strings über die Bridge)
+  und übergibt sie dem normalen Import.
 - Achtung: Die Dateien liegen im App-Container. Löschen der App löscht sie mit; ein iCloud-Geräte-Backup
   des iPhones enthält sie dagegen.
 
@@ -475,10 +489,13 @@ auch gelegentlich ohne erkennbaren Grund)
 - Bei Start und Rückkehr in die App wird das Datum gelesen. Ändert es sich (also nach „Aktualisieren“ in
   SideStore), werden die Mitteilungen mit den IDs 7101/7102 gelöscht und neu geplant
   (`@capacitor/local-notifications`): **24 h** und **3 h** vor Ablauf, nur wenn der Zeitpunkt noch in der
-  Zukunft liegt. Titel „Whoop Plus läuft bald ab“, Text „Öffne SideStore und tippe auf Aktualisieren –
-  dauert 10 Sekunden.“
-- Mitteilungs-Erlaubnis: nicht beim ersten Start, sondern nach dem **ersten erfolgreichen Verbinden** mit dem
-  Band – zuerst ein Erklär-Sheet mit einem Satz, erst bei „Ja“ die iOS-Abfrage. Es wird nur einmal gefragt.
+  Zukunft liegt. Titel „Whoop Plus läuft bald ab“, Text „Öffne SideStore und tippe auf Aktualisieren (falls noch
+  nicht geschehen) – dauert 10 Sekunden.“
+- Mitteilungs-Erlaubnis: nicht beim ersten Start, sondern nach einem **erfolgreichen Verbinden** mit dem
+  Band – zuerst ein Erklär-Sheet mit einem Satz, erst bei „Ja, erinnern“ die iOS-Abfrage. Das Sheet folgt den
+  Overlay-Regeln (nie über Sync-Zeremonie, Morgen-Story, „Was ist neu“, Verbinden-Dialog oder Workout).
+  Schließen = „später fragen“: höchstens dreimal, jeweils bei einem späteren Verbinden. Ohne Erlaubnis zeigt
+  *Mehr* „Erinnerungen aktivieren“ (fragt bzw. öffnet die iOS-Einstellungen, wenn bereits abgelehnt).
 - Weniger als 48 h bis zum Ablauf: dezenter Hinweis oben auf *Heute* (für den Tag ausblendbar).
   *Mehr* zeigt „App gültig bis Mi., 30. Okt., 21:14“.
 - Grenze: Die App kennt ein neues Ablaufdatum erst, wenn sie nach dem Verlängern einmal geöffnet wurde.

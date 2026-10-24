@@ -7,7 +7,9 @@ export const REMINDER_IDS = [7101, 7102] as const;
 export const REMINDER_HOURS_BEFORE = [24, 3] as const;
 export const BANNER_HOURS = 48;
 export const REMINDER_TITLE = 'Whoop Plus läuft bald ab';
-export const REMINDER_BODY = 'Öffne SideStore und tippe auf Aktualisieren – dauert 10 Sekunden.';
+export const REMINDER_BODY = 'Öffne SideStore und tippe auf Aktualisieren (falls noch nicht geschehen) – dauert 10 Sekunden.';
+/** So oft wird nach dem Verbinden höchstens nachgefragt (Schließen = „später fragen“). */
+export const MAX_PERMISSION_ASKS = 3;
 
 const KEY_SCHEDULED = 'whoop-plus.expiry-reminders';
 const KEY_ASKED = 'whoop-plus.notif-asked';
@@ -51,6 +53,8 @@ export interface ExpiryDeps {
   requestPermission(): Promise<NotifPermission>;
   schedule(reminders: Reminder[]): Promise<void>;
   cancel(ids: number[]): Promise<void>;
+  /** iOS-Einstellungen der App öffnen (wenn Mitteilungen dort abgelehnt wurden). */
+  openSettings(): Promise<void>;
   storage: Pick<Storage, 'getItem' | 'setItem'> | null;
   log(line: string): void;
 }
@@ -59,6 +63,8 @@ export interface ExpiryState {
   expiresAt: number | null;
   /** Erklär-Sheet vor der iOS-Mitteilungsabfrage anzeigen. */
   askPermission: boolean;
+  /** Aktueller Stand der Mitteilungs-Erlaubnis (null = unbekannt). */
+  permission: NotifPermission | null;
   bannerDismissed: string | null;
 }
 
@@ -70,7 +76,7 @@ export class ExpiryWatch {
   private refreshing: Promise<void> | null = null;
 
   constructor(private readonly deps: ExpiryDeps) {
-    this.state = { expiresAt: null, askPermission: false, bannerDismissed: this.get(KEY_BANNER) };
+    this.state = { expiresAt: null, askPermission: false, permission: null, bannerDismissed: this.get(KEY_BANNER) };
   }
 
   subscribe(fn: Listener): () => void {
@@ -120,6 +126,7 @@ export class ExpiryWatch {
     }
     const ms = iso ? Date.parse(iso) : NaN;
     this.set({ expiresAt: Number.isFinite(ms) ? ms : null });
+    await this.checkPermission();
     await this.syncReminders();
   }
 
@@ -130,7 +137,7 @@ export class ExpiryWatch {
     const key = String(exp);
     if (!force && this.get(KEY_SCHEDULED) === key) return;
     try {
-      if ((await this.deps.checkPermission()) !== 'granted') return;
+      if ((await this.checkPermission()) !== 'granted') return;
       await this.deps.cancel([...REMINDER_IDS]);
       const list = planReminders(exp, this.deps.now());
       if (list.length) await this.deps.schedule(list);
@@ -141,33 +148,64 @@ export class ExpiryWatch {
     }
   }
 
-  /** Nach dem ersten erfolgreichen Verbinden: einmalig erklären, warum Mitteilungen sinnvoll sind. */
-  async onConnected(): Promise<void> {
-    if (this.state.askPermission || this.get(KEY_ASKED)) return;
+  private async checkPermission(): Promise<NotifPermission | null> {
     try {
       const p = await this.deps.checkPermission();
-      if (p === 'prompt' || p === 'prompt-with-rationale') this.set({ askPermission: true });
-      else this.put(KEY_ASKED, '1');
+      if (p !== this.state.permission) this.set({ permission: p });
+      return p;
     } catch {
-      /* ohne Plugin: nichts */
+      return null; // ohne Plugin (z. B. Browser)
     }
   }
 
-  /** „Erlauben“ im Erklär-Sheet → iOS-Abfrage. */
+  private asks(): number | 'done' {
+    const v = this.get(KEY_ASKED);
+    return v === 'done' ? 'done' : Number(v) || 0;
+  }
+
+  /**
+   * Nach einem erfolgreichen Verbinden: kurz erklären, warum Mitteilungen sinnvoll sind (höchstens
+   * `MAX_PERMISSION_ASKS`-mal; „Schließen“ bedeutet „später fragen“).
+   */
+  async onConnected(): Promise<void> {
+    if (this.state.askPermission) return;
+    const n = this.asks();
+    if (n === 'done' || n >= MAX_PERMISSION_ASKS) return;
+    const p = await this.checkPermission();
+    if (p === 'prompt' || p === 'prompt-with-rationale') {
+      this.put(KEY_ASKED, String(n + 1));
+      this.set({ askPermission: true });
+    } else if (p) {
+      this.put(KEY_ASKED, 'done'); // schon entschieden (erlaubt oder abgelehnt)
+    }
+  }
+
+  /** „Ja, erinnern“ im Erklär-Sheet bzw. „Erinnerungen aktivieren“ in Mehr → iOS-Abfrage. */
   async acceptPermission(): Promise<void> {
     this.set({ askPermission: false });
-    this.put(KEY_ASKED, '1');
+    this.put(KEY_ASKED, 'done');
     try {
       const p = await this.deps.requestPermission();
+      this.set({ permission: p });
       if (p === 'granted') await this.syncReminders(true);
     } catch (e) {
       this.deps.log(`Mitteilungen: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  declinePermission(): void {
+  /** Sheet geschlossen (Hintergrund oder „Schließen“): später erneut fragen. */
+  askLater(): void {
     this.set({ askPermission: false });
-    this.put(KEY_ASKED, '1');
+  }
+
+  /** „Erinnerungen aktivieren“ in Mehr: fragen – oder, wenn schon abgelehnt, die iOS-Einstellungen öffnen. */
+  async enableReminders(): Promise<void> {
+    const p = await this.checkPermission();
+    if (p === 'denied') {
+      await this.deps.openSettings().catch(() => {});
+      return;
+    }
+    await this.acceptPermission();
   }
 
   dismissBanner(): void {

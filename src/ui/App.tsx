@@ -150,7 +150,8 @@ export function App() {
       {f.story && <Story date={f.story.date} />}
       {f.ceremony && <Ceremony />}
       {f.connectPrompt && <ConnectPrompt goTo={goTo} />}
-      <NotifPermissionSheet />
+      {/* Nur wenn sonst nichts im Vordergrund ist (Overlay-Regeln wie bei „Was ist neu“). */}
+      {!overlayOpen && !f.connectPrompt && !f.whatsNew && w.phase === 'idle' && !w.recovery && <NotifPermissionSheet />}
       {f.whatsNew && !f.ceremony && <WhatsNewSheet version={f.whatsNew.version} text={f.whatsNew.text} onClose={() => void flow.closeWhatsNew()} />}
       {w.recovery && w.phase === 'idle' && !f.ceremony && <RecoveryPrompt />}
     </>
