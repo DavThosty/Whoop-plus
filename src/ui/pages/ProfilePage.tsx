@@ -106,6 +106,14 @@ export function ProfilePage() {
   );
 }
 
+// Der Server akzeptiert POST-Anfragen an /api nur als JSON (CSRF-Schutz).
+const JSON_POST: RequestInit = {
+  method: 'POST',
+  credentials: 'same-origin',
+  headers: { 'Content-Type': 'application/json' },
+  body: '{}',
+};
+
 function AccountCard() {
   const [pair, setPair] = useState<{ url: string; expiresAt: number } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -114,7 +122,8 @@ function AccountCard() {
   const createPair = async () => {
     setErr(null);
     try {
-      const res = await fetch('/api/auth/pair', { method: 'POST', credentials: 'same-origin' });
+      const res = await fetch('/api/auth/pair', JSON_POST);
+      if (res.status === 403) throw new Error('Kopplungslinks lassen sich nur nach einer Passkey-Anmeldung (Safari) erstellen.');
       if (!res.ok) throw new Error(`Server antwortet mit ${res.status}`);
       setPair(await res.json());
     } catch (e) {
@@ -151,7 +160,7 @@ function AccountCard() {
         <button
           class="btn danger"
           onClick={async () => {
-            await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+            await fetch('/api/auth/logout', JSON_POST).catch(() => {});
             location.href = '/login';
           }}
         >
