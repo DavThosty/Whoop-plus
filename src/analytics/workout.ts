@@ -238,3 +238,104 @@ export class ZoneBuzzer {
     this.lastBuzz = nowMs;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Unterbrochene Workouts (App beendet) wiederherstellen
+
+/** Zwischenstand eines laufenden Workouts (wird regelmäßig gespeichert). Zeiten in Unix-Sekunden. */
+export interface WorkoutCheckpoint {
+  v: 1;
+  startTs: number;
+  /** Abgeschlossene Pausen [Beginn, Ende]. */
+  pauses: [number, number][];
+  /** Beginn der laufenden Pause, sonst null. */
+  pausedAt: number | null;
+  /** Zeitpunkt des letzten Speicherns. */
+  savedAt: number;
+  rhr: number;
+  maxHr: number;
+  /** War der Live-Puls vor dem Workout schon an? */
+  prevLive: boolean;
+}
+
+/** Aktive Abschnitte [a, b) zwischen start und end ohne Pausen (Pausen werden geklemmt und sortiert). */
+export function activeSegments(start: number, end: number, pauses: readonly (readonly [number, number])[]): [number, number][] {
+  const ps = pauses
+    .map(([a, b]) => [Math.max(start, Math.min(a, b)), Math.min(end, Math.max(a, b))] as [number, number])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
+  const out: [number, number][] = [];
+  let cur = start;
+  for (const [a, b] of ps) {
+    if (a > cur) out.push([cur, a]);
+    cur = Math.max(cur, b);
+  }
+  if (end > cur) out.push([cur, end]);
+  return out;
+}
+
+export function activeSeconds(start: number, end: number, pauses: readonly (readonly [number, number])[]): number {
+  return activeSegments(start, end, pauses).reduce((s, [a, b]) => s + (b - a), 0);
+}
+
+/**
+ * Baut die Auswertung aus gespeicherten Samples nach (z. B. nach einem App-Neustart).
+ * Samples in Pausen werden ignoriert; über eine Pause hinweg wird keine Zeit gezählt.
+ * Liefert auch den Akkumulator, damit ein fortgesetztes Workout weiterzählen kann.
+ */
+export function rebuildWorkout(
+  samples: readonly { ts: number; hr: number }[],
+  start: number,
+  end: number,
+  pauses: readonly (readonly [number, number])[],
+  params: WorkoutParams,
+): { acc: WorkoutAccumulator; stats: WorkoutStats; points: { ts: number; hr: number }[]; durationS: number } {
+  const acc = new WorkoutAccumulator(params);
+  const sorted = [...samples].sort((a, b) => a.ts - b.ts);
+  const segs = activeSegments(start, end, pauses);
+  let i = 0;
+  for (const [a, b] of segs) {
+    while (i < sorted.length && sorted[i]!.ts < a) i++;
+    while (i < sorted.length && sorted[i]!.ts < b) {
+      acc.add(sorted[i]!.ts, sorted[i]!.hr);
+      i++;
+    }
+    acc.finish(b);
+  }
+  return { acc, stats: acc.stats(), points: acc.points(), durationS: Math.round(activeSeconds(start, end, pauses)) };
+}
+
+const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
+
+/** Prüft einen (z. B. importierten) Workout-Datensatz und füllt fehlende Felder; null = unbrauchbar. */
+export function normalizeWorkout(raw: unknown): WorkoutRecord | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const start = finite(r.start) ? r.start : finite(r.id) ? r.id : null;
+  if (start == null) return null;
+  const end = finite(r.end) && r.end >= start ? r.end : start;
+  const zs = Array.isArray(r.zoneSeconds) ? r.zoneSeconds : [];
+  const zoneSeconds = [0, 1, 2, 3, 4].map((i) => (finite(zs[i]) && zs[i] >= 0 ? zs[i] : 0)) as ZoneSeconds;
+  const hr = Array.isArray(r.hr)
+    ? r.hr
+        .filter((p): p is { ts: number; hr: number } => !!p && typeof p === 'object' && finite((p as { ts?: unknown }).ts) && finite((p as { hr?: unknown }).hr))
+        .map((p) => ({ ts: p.ts, hr: p.hr }))
+    : [];
+  const num = (v: unknown, d = 0) => (finite(v) ? v : d);
+  const opt = (v: unknown) => (finite(v) ? v : null);
+  return {
+    id: finite(r.id) ? r.id : start,
+    start,
+    end,
+    durationS: Math.max(0, num(r.durationS, end - start)),
+    strain: Math.min(21, Math.max(0, num(r.strain))),
+    trimp: Math.max(0, num(r.trimp)),
+    kcal: Math.max(0, num(r.kcal)),
+    avgHr: opt(r.avgHr),
+    maxHr: opt(r.maxHr),
+    zoneSeconds,
+    hr,
+    ...(finite(r.rhr) ? { rhr: r.rhr } : {}),
+    ...(finite(r.maxHrRef) ? { maxHrRef: r.maxHrRef } : {}),
+  };
+}

@@ -1,6 +1,6 @@
 // Lokaler Speicher im Browser (IndexedDB). Nichts davon verlässt das Gerät.
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type { WorkoutRecord } from '../analytics/workout';
+import { normalizeWorkout, type WorkoutRecord } from '../analytics/workout';
 import type { DailySummary, Profile, SampleRecord } from '../types';
 
 interface WhoopDb extends DBSchema {
@@ -16,9 +16,30 @@ const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase<WhoopDb>> | null = null;
 
+export type DbNotice = 'blocked' | 'blocking' | 'terminated';
+let noticeHandler: (n: DbNotice) => void = () => {};
+/** Hinweise zur Datenbank (z. B. ein anderer Tab blockiert ein Update) an die Oberfläche melden. */
+export function onDbNotice(fn: (n: DbNotice) => void): void {
+  noticeHandler = fn;
+}
+
 export function db(): Promise<IDBPDatabase<WhoopDb>> {
   if (!dbPromise) {
     dbPromise = openDB<WhoopDb>(DB_NAME, DB_VERSION, {
+      // Ein anderer Tab mit älterer Version hält die Datenbank offen → Update wartet.
+      blocked() {
+        noticeHandler('blocked');
+      },
+      // Ein anderer Tab will aktualisieren → hier schließen, damit er nicht hängen bleibt.
+      blocking() {
+        void dbPromise?.then((d) => d.close());
+        dbPromise = null;
+        noticeHandler('blocking');
+      },
+      terminated() {
+        dbPromise = null;
+        noticeHandler('terminated');
+      },
       upgrade(d, oldVersion) {
         if (oldVersion < 1) {
           d.createObjectStore('samples', { keyPath: 'ts' });
@@ -222,7 +243,8 @@ export async function importBackup(text: string): Promise<number> {
   await Promise.all([...(data.days ?? []).map((day) => daysTx.store.put(day)), daysTx.done]);
   if (Array.isArray(data.workouts) && data.workouts.length) {
     const wTx = d.transaction('workouts', 'readwrite');
-    await Promise.all([...data.workouts.filter((w) => typeof w?.id === 'number').map((w) => wTx.store.put(w)), wTx.done]);
+    const valid = data.workouts.map(normalizeWorkout).filter((w): w is WorkoutRecord => w !== null);
+    await Promise.all([...valid.map((w) => wTx.store.put(w)), wTx.done]);
   }
   const samples = data.samples ?? [];
   for (let i = 0; i < samples.length; i += 20000) {

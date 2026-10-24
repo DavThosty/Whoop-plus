@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { reducedMotion, useTween } from '../anim';
 import { Hypnogram, Icon, Ring } from '../components';
 import { flow } from '../flow';
@@ -25,6 +25,7 @@ export function Story(props: { date: string }) {
   const close = () => {
     if (leaving) return;
     setLeaving(true);
+    flow.beginExit();
     setTimeout(() => flow.closeStory(), reducedMotion() ? 0 : 380);
   };
   const next = () => (idx < count - 1 ? setIdx(idx + 1) : close());
@@ -104,7 +105,10 @@ export function Story(props: { date: string }) {
           <button class="circle-btn" style={{ pointerEvents: 'auto' }} aria-label="Schließen" onClick={close}><Icon name="close" /></button>
         </div>
 
-        {day === undefined ? <div class="slide" /> : idx === 0 ? <SleepSlide key="s0" day={day} /> : <RecoSlide key="s1" day={day} prev={prev} onDone={close} />}
+        {day === undefined ? <div class="slide" /> : idx === 0 ? <SleepSlide key="s0" day={day} /> : <RecoSlide key="s1" day={day} prev={prev} />}
+        {idx === 1 && day !== undefined && (
+          <button class="btn primary story-cta" onClick={close}>Los geht's</button>
+        )}
       </div>
     </div>
   );
@@ -174,25 +178,25 @@ function MiniStat(props: { v: string; k: string }) {
   );
 }
 
-function RecoSlide(props: { day: import('../../types').DailySummary | null; prev: import('../../types').DailySummary[]; onDone: () => void }) {
+function RecoSlide(props: { day: import('../../types').DailySummary | null; prev: import('../../types').DailySummary[] }) {
   const s = useApp();
   const t = useTween('reco-slide', 2000, 450);
-  const reco = buildRecommendation(props.day, props.prev, s.profile);
+  const reco = useMemo(() => buildRecommendation(props.day, props.prev, s.profile), [props.day, props.prev, s.profile]);
   const rec = props.day?.recovery ?? null;
   const color = recoveryHex(rec);
   return (
     <div class="slide">
       <div class="greet">Deine Tagesempfehlung</div>
-      <div class="center" style={{ margin: '20px 0 6px', display: 'flex', flexDirection: 'column', alignItems: 'center', animationDelay: '0.1s' }}>
-        <Ring size={196} stroke={15} fraction={rec == null ? null : rec / 100} color={color} t={t}>
+      <div class="center story-ringbox" style={{ animationDelay: '0.1s' }}>
+        <Ring size={196} stroke={15} class="story-ring" fraction={rec == null ? null : rec / 100} color={color} t={t}>
           <div class="eyebrow">Recovery</div>
-          <div class="hero-value" style={{ fontSize: 60 }}>{rec == null ? '–' : Math.round(rec * t)}{rec != null && <small>%</small>}</div>
+          <div class="hero-value story-rec">{rec == null ? '–' : Math.round(rec * t)}{rec != null && <small>%</small>}</div>
         </Ring>
-        <div class="hero-state" style={{ color: rec == null ? 'var(--text)' : color, marginTop: 12 }}>{recoveryState(props.day)}</div>
+        <div class="hero-state" style={{ color: rec == null ? 'var(--text)' : color, marginTop: 10 }}>{recoveryState(props.day)}</div>
       </div>
       {reco && (
         <>
-          <p class="reco-title" style={{ marginTop: 14, fontSize: 19, animationDelay: '0.3s' }}>{reco.title}</p>
+          <p class="reco-title story-reco-title" style={{ animationDelay: '0.3s' }}>{reco.title}</p>
           <p class="reco-text" style={{ animationDelay: '0.35s' }}>{reco.text}</p>
           <div class="reco-stats" style={{ animationDelay: '0.45s' }}>
             <div class="reco-stat" style={{ background: 'rgba(255,255,255,0.06)' }}>
@@ -206,9 +210,6 @@ function RecoSlide(props: { day: import('../../types').DailySummary | null; prev
           </div>
         </>
       )}
-      <button class="btn primary story-cta" style={{ marginTop: 22, pointerEvents: 'auto', animationDelay: '0.6s' }} onClick={props.onDone}>
-        Los geht's
-      </button>
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { Ring } from '../components';
 import { app } from '../controller';
 import { flow } from '../flow';
 import { dateTime, recoveryHex, recoveryState, today } from '../format';
-import { useApp } from '../hooks';
+import { useSelect } from '../hooks';
 
 type Phase = 'connect' | 'sync' | 'compute' | 'reveal' | 'error';
 
@@ -15,23 +15,26 @@ const REVEAL_MS = 3600;
 
 /** Erster Sync des Tages: Partikel strömen ins Band, danach wird die Recovery enthüllt. */
 export function Ceremony() {
-  const s = useApp();
+  const s = useSelect(app, (a) => ({ sync: a.sync, syncDoneAt: a.syncDoneAt, conn: a.conn, postSync: a.postSync, computing: a.computing, error: a.error }));
+  // Beginn des auslösenden Syncs: nur ein danach gemeldetes Sync-Ende zählt (ältere, schon beendete Syncs nicht).
+  const [triggeredAt] = useState(() => flow.state.ceremonyAt || Date.now());
   const [phase, setPhase] = useState<Phase>('connect');
   const [day, setDay] = useState<DailySummary | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const startedAt = useRef(Date.now());
-  const sawActive = useRef(false);
   const finished = useRef(false);
   const coreRef = useRef<HTMLDivElement>(null);
 
-  const records = s.sync?.records ?? 0;
+  const current = !!s.sync && (!s.sync.done || (s.syncDoneAt ?? 0) >= triggeredAt);
+  const records = current ? s.sync!.records : 0;
   const smooth = useSmoothNumber(records, 0.08);
 
   const finish = (ok: boolean, skipped = false) => {
     if (finished.current) return;
     finished.current = true;
     setLeaving(true);
+    flow.beginExit();
     setTimeout(() => void flow.endCeremony(ok, skipped), reducedMotion() ? 0 : 480);
   };
 
@@ -39,8 +42,8 @@ export function Ceremony() {
   useEffect(() => {
     if (phase === 'reveal' || phase === 'error') return;
     const sync = s.sync;
-    if (sync && !sync.done) sawActive.current = true;
-    if (sawActive.current && sync?.done) {
+    const done = !!sync?.done && (s.syncDoneAt ?? 0) >= triggeredAt;
+    if (sync && done) {
       if (sync.ok === false) {
         setErr(sync.error ?? 'Die Synchronisierung wurde unterbrochen.');
         setPhase('error');
@@ -65,8 +68,8 @@ export function Ceremony() {
       setPhase('error');
       return;
     }
-    setPhase(sawActive.current && records > 0 ? 'sync' : 'connect');
-  }, [s.sync, s.conn, s.postSync, s.computing, records]);
+    setPhase(sync && !sync.done && records > 0 ? 'sync' : 'connect');
+  }, [s.sync, s.syncDoneAt, s.conn, s.postSync, s.computing, records]);
 
   useEffect(() => {
     if (phase === 'reveal') {

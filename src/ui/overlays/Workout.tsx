@@ -3,6 +3,7 @@ import type { WorkoutRecord } from '../../analytics/workout';
 import { useSmoothNumber, useTween } from '../anim';
 import { GlassCard, Icon, LineChart, Ring, Stat } from '../components';
 import { COLORS, dateTime, duration, hms, num, ZONE_COLORS, ZONE_NAMES, zoneColor } from '../format';
+import { app } from '../controller';
 import { useApp, useStore } from '../hooks';
 import { workout } from '../workout';
 
@@ -30,7 +31,7 @@ function LiveScreen() {
       <div class="content">
         <div class="w-top">
           <div>
-            <div class="eyebrow" style={{ color: 'rgba(255,255,255,0.7)' }}>{paused ? 'Pausiert' : w.phase === 'starting' ? 'Startet …' : 'Workout'}</div>
+            <div class="eyebrow" style={{ color: 'rgba(255,255,255,0.7)' }}>{paused ? 'Pausiert' : w.phase === 'starting' ? 'Startet …' : w.phase === 'stopping' ? 'Wird gespeichert …' : 'Workout'}</div>
             <div class="w-time">{hms(w.elapsedS)}</div>
           </div>
           <span class="pill" style={{ cursor: 'default', background: 'rgba(0,0,0,0.3)' }}>
@@ -54,7 +55,20 @@ function LiveScreen() {
           </div>
         </div>
 
-        {w.linkLost && <div class="banner">Verbindung zum Band verloren – es wird automatisch neu verbunden.</div>}
+        {w.linkLost && (
+          <div class="banner row between" style={{ textAlign: 'left' }}>
+            <span>{s.conn === 'connecting' ? 'Verbinde neu …' : 'Verbindung zum Band verloren. Die Zeit läuft weiter.'}</span>
+            <button class="btn small" style={{ minHeight: 36, background: 'rgba(255,255,255,0.15)' }} disabled={s.conn === 'connecting'} onClick={() => app.connect()}>
+              Neu verbinden
+            </button>
+          </div>
+        )}
+        {(s.error || w.error) && (
+          <button class="banner" style={{ display: 'block', width: '100%', color: '#fff', cursor: 'pointer', font: 'inherit', fontSize: 13 }}
+            onClick={() => { app.clearError(); workout.clearError(); }}>
+            {w.error ?? s.error} · tippen zum Schließen
+          </button>
+        )}
 
         <div class="w-stats">
           <div class="w-stat"><div class="v">{num(strain, 1)}</div><div class="k">Strain</div></div>
@@ -69,11 +83,11 @@ function LiveScreen() {
 
         <div class="w-ctrl">
           {paused ? (
-            <button class="btn white" onClick={() => workout.resume()}><Icon name="play" /> Weiter</button>
+            <button class="btn white" disabled={w.phase !== 'paused'} onClick={() => workout.resume()}><Icon name="play" /> Weiter</button>
           ) : (
             <button class="btn" disabled={w.phase !== 'active'} onClick={() => workout.pause()}><Icon name="pause" /> Pause</button>
           )}
-          <button class="btn stop" disabled={w.phase === 'starting'} onClick={() => setConfirm(true)}><Icon name="stop" /> Beenden</button>
+          <button class="btn stop" disabled={w.phase !== 'active' && w.phase !== 'paused'} onClick={() => setConfirm(true)}><Icon name="stop" /> Beenden</button>
         </div>
       </div>
 

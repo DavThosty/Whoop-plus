@@ -1,4 +1,4 @@
-import { useRef, useState } from 'preact/hooks';
+import { useMemo, useRef, useState } from 'preact/hooks';
 import type { Recommendation } from '../../analytics';
 import { useTween } from '../anim';
 import type { Tab } from '../App';
@@ -6,11 +6,11 @@ import { Delta, GlassCard, Icon, LineChart, RangeBar, Ring } from '../components
 import { app } from '../controller';
 import { flow, type DetailKind } from '../flow';
 import { addDays, clockMin, COLORS, durationShort, num, recoveryHex, recoveryState, today } from '../format';
-import { useApp, useDay, usePrevious } from '../hooks';
+import { useApp, useDay, useLive, usePrevious, useSelect } from '../hooks';
 import { buildRecommendation, vitals } from '../insights';
 
 export function Today(props: { date: string; setDate: (d: string) => void; goTo: (tab: Tab) => void }) {
-  const s = useApp();
+  const s = useSelect(app, (a) => ({ dataVersion: a.dataVersion, profile: a.profile, conn: a.conn, statsCount: a.stats?.count ?? null }));
   const day = useDay(props.date, s.dataVersion);
   const prev = usePrevious(props.date, s.dataVersion);
   const isToday = props.date === today();
@@ -42,10 +42,10 @@ export function Today(props: { date: string; setDate: (d: string) => void; goTo:
   const t = useTween(animKey, 1600, 120, day !== undefined);
   const tCards = useTween(animKey, 1400, 380, day !== undefined);
 
-  const reco = isToday ? buildRecommendation(day, prev, s.profile) : null;
-  const v = vitals(day, prev);
+  const reco = useMemo(() => (isToday ? buildRecommendation(day, prev, s.profile) : null), [isToday, day, prev, s.profile]);
+  const v = useMemo(() => vitals(day, prev), [day, prev]);
   const open = (kind: DetailKind) => (rect: DOMRect) => flow.openDetail(kind, props.date, rect);
-  const noData = s.stats?.count === 0 && s.conn === 'disconnected';
+  const noData = s.statsCount === 0 && s.conn === 'disconnected';
 
   if (noData && !day) return <Welcome goTo={props.goTo} />;
 
@@ -175,7 +175,7 @@ function RecoCard(props: { reco: Recommendation; strain: number | null; t: numbe
 }
 
 function LiveCard() {
-  const s = useApp();
+  const s = useLive();
   const hr = s.live && s.live.hr > 0 ? s.live.hr : null;
   const busy = s.conn !== 'connected' && s.conn !== 'syncing';
   const beat = hr ? `${(60 / hr).toFixed(2)}s` : '1s';

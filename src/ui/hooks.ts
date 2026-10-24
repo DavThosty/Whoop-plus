@@ -1,14 +1,62 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { WorkoutRecord } from '../analytics/workout';
 import { getDay, getDays, getSamples, getWorkouts } from '../store/db';
 import type { DailySummary, SampleRecord } from '../types';
 import { app, type AppState } from './controller';
 import { addDays } from './format';
 
-export function useApp(): AppState {
-  const [s, setS] = useState(app.state);
-  useEffect(() => app.subscribe(setS), []);
-  return s;
+type Store<S> = { state: S; subscribe(fn: (s: S) => void): () => void };
+
+/** Flacher Vergleich: Primitive per ===, Arrays und einfache Objekte eine Ebene tief. */
+export function shallowEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || !a || !b) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) if (!Object.is((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+  return true;
+}
+
+/**
+ * Abonniert nur einen Ausschnitt eines Stores: neu gerendert wird erst, wenn sich der
+ * ausgewählte Wert (flach verglichen) ändert. Liest den Zustand beim Abonnieren neu,
+ * damit Änderungen zwischen Render und Effekt nicht verloren gehen.
+ */
+export function useSelect<S, T>(store: Store<S>, select: (s: S) => T): T {
+  const [v, setV] = useState(() => select(store.state));
+  const sel = useRef(select);
+  sel.current = select;
+  const cur = useRef(v);
+  cur.current = v;
+  useEffect(() => {
+    const update = (s: S) => {
+      const nv = sel.current(s);
+      if (!shallowEqual(nv, cur.current)) {
+        cur.current = nv;
+        setV(nv);
+      }
+    };
+    update(store.state);
+    return store.subscribe(update);
+  }, [store]);
+  return v;
+}
+
+/** Alles außer den Live-Pulsdaten (die kommen bis zu 1×/s) – für Seiten und Karten. */
+export type AppView = Omit<AppState, 'live' | 'liveSeries'>;
+function withoutLive(s: AppState): AppView {
+  const { live: _l, liveSeries: _ls, ...rest } = s;
+  return rest;
+}
+
+export function useApp(): AppView {
+  return useSelect(app, withoutLive);
+}
+
+/** Live-Puls (nur für Komponenten, die ihn wirklich anzeigen). */
+export function useLive(): Pick<AppState, 'live' | 'liveSeries' | 'liveOn' | 'conn'> {
+  return useSelect(app, (s) => ({ live: s.live, liveSeries: s.liveSeries, liveOn: s.liveOn, conn: s.conn }));
 }
 
 export function useDay(date: string, version: number): DailySummary | null | undefined {
@@ -76,7 +124,7 @@ export function useWorkouts(version: number): WorkoutRecord[] | null {
 }
 
 /** Abonniert einen einfachen Store mit subscribe()/state. */
-export function useStore<S>(store: { state: S; subscribe(fn: (s: S) => void): () => void }): S {
+export function useStore<S>(store: Store<S>): S {
   const [s, setS] = useState(store.state);
   useEffect(() => {
     setS(store.state);

@@ -6,18 +6,18 @@ import { BarChart, GlassCard, Icon, LineChart, Stat } from '../components';
 import { Expand } from '../details';
 import { flow } from '../flow';
 import { addDays, COLORS, dateTime, hms, num, recoveryHex, shortDay, today, weekday } from '../format';
-import { useApp, useDays, useStore, useWorkouts } from '../hooks';
+import { useApp, useDays, useSelect, useWorkouts } from '../hooks';
 import { WorkoutSummaryView } from '../overlays/Workout';
 import { workout } from '../workout';
 
 export function Trends() {
   const s = useApp();
-  const w = useStore(workout);
+  const wVersion = useSelect(workout, (x) => x.version);
   const [range, setRange] = useState(7);
   const to = today();
   const from = addDays(to, -(range - 1));
   const days = useDays(from, to, s.dataVersion);
-  const workouts = useWorkouts(w.version);
+  const workouts = useWorkouts(wVersion);
 
   // Lückenlose Tagesliste, damit fehlende Tage als Lücke sichtbar bleiben.
   const byDate = new Map(days.map((d) => [d.date, d]));

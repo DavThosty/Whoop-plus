@@ -6,7 +6,7 @@ import { GlassCard, Icon, Stat } from '../components';
 import { app } from '../controller';
 import { ExplainSheet } from '../explain';
 import { dateTime, relative } from '../format';
-import { useApp, useStore, useWorkouts } from '../hooks';
+import { useApp, useSelect, useWorkouts } from '../hooks';
 import { workout } from '../workout';
 import { FirstSteps } from './Today';
 
@@ -207,8 +207,8 @@ function ProfileSection() {
 
 function DataSection() {
   const s = useApp();
-  const w = useStore(workout);
-  const workouts = useWorkouts(w.version);
+  const wVersion = useSelect(workout, (x) => x.version);
+  const workouts = useWorkouts(wVersion);
   const fmt = (ts: number | null | undefined) => (ts ? new Date(ts * 1000).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '–');
   const count = s.stats?.count ?? 0;
   const big = count >= 100_000;

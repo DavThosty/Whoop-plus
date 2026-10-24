@@ -2,7 +2,7 @@
 import { dayBounds, localDateString, sleepWindow } from '../analytics';
 import { WhoopDevice } from '../ble/whoop';
 import {
-  exportBackup, getKv, getProfile, importBackup, pruneSamples, putSamples, requestPersistence,
+  exportBackup, getKv, getProfile, importBackup, onDbNotice, pruneSamples, putSamples, requestPersistence,
   sampleBounds, setKv, setProfile, storageEstimate,
 } from '../store/db';
 import { recomputeRange } from '../store/pipeline';
@@ -20,6 +20,8 @@ export interface AppState {
   /** Puls der letzten 10 Minuten für das Live-Diagramm. */
   liveSeries: { ts: number; hr: number }[];
   sync: SyncProgress | null;
+  /** Zeitpunkt (ms), zu dem zuletzt ein Sync-Ende gemeldet wurde. */
+  syncDoneAt: number | null;
   lastSync: number | null;
   computing: boolean;
   /** Nach dem Sync: Daten werden gespeichert und ausgewertet (vom Sync-Ende bis alles fertig ist). */
@@ -56,6 +58,7 @@ export class AppController {
     liveOn: false,
     liveSeries: [],
     sync: null,
+    syncDoneAt: null,
     lastSync: null,
     computing: false,
     postSync: false,
@@ -118,6 +121,11 @@ export class AppController {
   }
 
   async init(): Promise<void> {
+    onDbNotice((n) => {
+      if (n === 'blocked') this.set({ error: 'Speicher-Update wartet: Bitte andere geöffnete Tabs von Whoop Plus schließen.' });
+      else if (n === 'blocking') this.set({ error: 'Whoop Plus wurde in einem anderen Tab aktualisiert. Bitte diese Seite neu laden.' });
+      else this.log('Datenbankverbindung wurde vom Browser beendet – wird neu geöffnet.');
+    });
     try {
       const [profile, lastSync, alarm, retention, stats] = await Promise.all([
         getProfile(),
@@ -161,7 +169,7 @@ export class AppController {
       dev.on('battery', (battery) => this.set({ battery })),
       dev.on('live', (live) => this.onLive(live)),
       dev.on('sync', (sync) => {
-        this.set({ sync });
+        this.set(sync.done ? { sync, syncDoneAt: Date.now() } : { sync });
         if (sync.done) void this.onSyncDone(sync);
       }),
       dev.on('log', (line) => this.log(line)),

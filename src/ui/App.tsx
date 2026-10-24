@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { Icon, Sheet } from './components';
 import { app } from './controller';
 import { DetailView } from './details';
 import { flow } from './flow';
-import { dateLabel, longDate, recoveryHex, today } from './format';
-import { useApp, useDay, useStore } from './hooks';
+import { dateTime, dateLabel, hms, longDate, recoveryHex, today } from './format';
+import { useApp, useDay, useSelect, useStore } from './hooks';
 import { Ceremony } from './overlays/Ceremony';
 import { Story } from './overlays/Story';
 import { WorkoutScreen } from './overlays/Workout';
@@ -25,9 +25,13 @@ function tabFromHash(h: string): Tab | null {
 }
 
 export function App() {
-  const s = useApp();
+  // Nur die Felder abonnieren, die der Rahmen braucht – Live-Puls und Workout-Takt rendern nur ihre eigenen Komponenten neu.
+  const s = useSelect(app, (a) => ({
+    conn: a.conn, battery: a.battery?.percent ?? null, error: a.error, demo: a.demo, dataVersion: a.dataVersion,
+    postSync: a.postSync, computing: a.computing, statsLoaded: !!a.stats, statsCount: a.stats?.count ?? null,
+  }));
   const f = useStore(flow);
-  const w = useStore(workout);
+  const w = useSelect(workout, (x) => ({ phase: x.phase, recovery: !!x.recovery }));
   const [tab, setTab] = useState<Tab>(() => tabFromHash(location.hash.slice(1)) ?? 'heute');
   const [date, setDate] = useState(today());
   const [followToday, setFollowToday] = useState(true);
@@ -50,7 +54,7 @@ export function App() {
 
   useEffect(() => {
     flow.start();
-    void app.init();
+    void app.init().then(() => workout.checkRecovery());
   }, []);
 
   useEffect(() => {
@@ -60,21 +64,41 @@ export function App() {
 
   // Morgen-Story, sobald im Hintergrund Ruhe ist (nach Start, Sync und Berechnung).
   useEffect(() => {
-    if (s.stats) void flow.maybeAutoStory();
-  }, [s.dataVersion, s.conn, s.postSync, s.computing, s.stats?.count]);
+    if (s.statsLoaded) void flow.maybeAutoStory();
+  }, [s.dataVersion, s.conn, s.postSync, s.computing, s.statsCount, s.statsLoaded, !!f.detail, w.phase, w.recovery, f.connectPrompt]);
 
   // Glow-Farbe folgt der Recovery des angezeigten Tags (auf anderen Seiten: heute).
   const glowDay = useDay(tab === 'heute' || tab === 'schlaf' ? date : today(), s.dataVersion);
   const glow = recoveryHex(glowDay?.recovery ?? null);
+  // Der Glow ist statisch; nur bei einem Farbwechsel „atmet“ er einmal.
+  const [pulse, setPulse] = useState(false);
+  const firstGlow = useRef(true);
   useEffect(() => {
     document.documentElement.style.setProperty('--glow', glow);
+    if (firstGlow.current) {
+      firstGlow.current = false;
+      return;
+    }
+    setPulse(true);
+    const id = setTimeout(() => setPulse(false), 3200);
+    return () => clearTimeout(id);
   }, [glow]);
 
-  // Hintergrund nicht scrollen, solange ein Vollbild offen ist.
+  // Solange ein Vollbild offen ist: Hintergrund nicht scrollen, Animationen pausieren und – sobald das
+  // Vollbild die Seite ganz verdeckt – die Seite ausblenden (spart das Neuberechnen der Glas-Unschärfe).
   const overlayOpen = !!(f.detail || f.story || f.ceremony || w.phase !== 'idle');
+  const [settled, setSettled] = useState(false);
   useEffect(() => {
     document.body.style.overflow = overlayOpen ? 'hidden' : '';
+    document.body.classList.toggle('overlay-open', overlayOpen);
+    if (!overlayOpen) {
+      setSettled(false);
+      return;
+    }
+    const id = setTimeout(() => setSettled(true), 700);
+    return () => clearTimeout(id);
   }, [overlayOpen]);
+  const covered = overlayOpen && settled && !f.exiting;
 
   const goTo = (t: Tab) => setTab(t);
   const titles: Record<Tab, [string, string]> = {
@@ -87,9 +111,9 @@ export function App() {
 
   return (
     <>
-      <div class="bg-glow" aria-hidden="true"><div class="grain" /></div>
+      <div class={`bg-glow ${pulse ? 'pulse' : ''}`} aria-hidden="true" style={covered ? { visibility: 'hidden' } : undefined}><div class="grain" /></div>
       {!f.ceremony && <TopLine />}
-      <div class="app">
+      <div class="app" style={covered ? { visibility: 'hidden' } : undefined} aria-hidden={covered ? 'true' : undefined}>
         <header class="topbar">
           <div style={{ minWidth: 0 }}>
             <div class="eyebrow">{titles[tab][1]}</div>
@@ -97,7 +121,7 @@ export function App() {
           </div>
           <button class="pill" onClick={() => setTab('mehr')} aria-label="Verbindungsstatus">
             <span class={`dot ${s.conn === 'connected' ? 'on' : s.conn === 'disconnected' ? (s.error ? 'err' : '') : 'busy'}`} />
-            {statusText(s.conn, s.battery?.percent ?? null, busy, s.demo)}
+            {statusText(s.conn, s.battery, busy, s.demo)}
           </button>
         </header>
 
@@ -115,7 +139,7 @@ export function App() {
         </main>
       </div>
 
-      <nav class="tabbar" aria-label="Navigation">
+      <nav class="tabbar" aria-label="Navigation" style={covered ? { visibility: 'hidden' } : undefined}>
         <TabBtn id="heute" tab={tab} setTab={setTab} icon="today" label="Heute" />
         <TabBtn id="schlaf" tab={tab} setTab={setTab} icon="moon" label="Schlaf" />
         <button class="tab-center" aria-label="Workout starten" onClick={() => void flow.startWorkout()}>
@@ -130,6 +154,7 @@ export function App() {
       {f.story && <Story date={f.story.date} />}
       {f.ceremony && <Ceremony />}
       {f.connectPrompt && <ConnectPrompt goTo={goTo} />}
+      {w.recovery && w.phase === 'idle' && !f.ceremony && <RecoveryPrompt />}
     </>
   );
 }
@@ -156,7 +181,7 @@ function statusText(conn: string, battery: number | null, busy: boolean, demo: b
 
 /** Dünne Fortschrittslinie oben für unauffällige Syncs. */
 function TopLine() {
-  const s = useApp();
+  const s = useSelect(app, (a) => ({ conn: a.conn, sync: a.sync, postSync: a.postSync, computing: a.computing }));
   const [first, setFirst] = useState<number | null>(null);
   const syncing = s.conn === 'syncing' && !!s.sync && !s.sync.done;
   const on = syncing || s.postSync || s.computing;
@@ -203,6 +228,46 @@ function ConnectPrompt(props: { goTo: (t: Tab) => void }) {
           </>
         )}
         <button class="btn ghost" onClick={() => { close(); props.goTo('mehr'); }}>Zu den Band-Einstellungen</button>
+      </div>
+    </Sheet>
+  );
+}
+
+/** Beim Start gefundenes, unterbrochenes Workout (z. B. weil iOS die App beendet hat). */
+function RecoveryPrompt() {
+  const s = useApp();
+  const cp = useSelect(workout, (x) => x.recovery);
+  const err = useSelect(workout, (x) => x.error);
+  const [busy, setBusy] = useState(false);
+  if (!cp) return null;
+  const end = cp.pausedAt ?? cp.savedAt;
+  const pauses = cp.pauses.reduce((a, [x, y]) => a + Math.max(0, y - x), 0);
+  const linked = s.conn === 'connected' || s.conn === 'syncing';
+  const act = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Sheet title="Unterbrochenes Workout" onClose={() => workout.deferRecovery()}>
+      <p>
+        Ein Workout vom {dateTime(Math.floor(cp.startTs))} wurde nicht beendet (gespeichert bis {hms(end - cp.startTs - pauses)} aktive Zeit).
+        Du kannst es fortsetzen oder mit den bis dahin aufgezeichneten Daten abschließen.
+      </p>
+      {err && <div class="note err" style={{ marginBottom: 12 }}>{err}</div>}
+      <div class="btns">
+        {linked ? (
+          <button class="btn primary" disabled={busy} onClick={() => act(() => workout.resumeRecovered())}><Icon name="play" /> Workout fortsetzen</button>
+        ) : (
+          <button class="btn primary" disabled={busy || s.conn === 'connecting' || !s.supported} onClick={() => app.connect()}>
+            <Icon name="band" /> {s.conn === 'connecting' ? 'Verbinde …' : 'Band verbinden zum Fortsetzen'}
+          </button>
+        )}
+        <button class="btn" disabled={busy} onClick={() => act(() => workout.finishRecovered())}><Icon name="check" /> Beenden & speichern</button>
+        <button class="btn danger" disabled={busy} onClick={() => act(() => workout.discardRecovered())}>Verwerfen</button>
       </div>
     </Sheet>
   );

@@ -1,5 +1,5 @@
 import type { ComponentChildren } from 'preact';
-import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ExplainKey } from '../analytics';
 import { dayBounds } from '../analytics';
 import { reducedMotion, useTween } from './anim';
@@ -9,7 +9,7 @@ import { flow, type DetailKind } from './flow';
 import {
   addDays, clock, COLORS, dateLabel, duration, num, recoveryHex, recoveryState, shortDay, today, weekday, ZONE_COLORS,
 } from './format';
-import { useApp, useDay, useDays, useMinuteHr, usePrevious, useStore, useWorkouts } from './hooks';
+import { useApp, useDay, useDays, useMinuteHr, usePrevious, useSelect, useWorkouts } from './hooks';
 import { buildRecommendation, recoveryBreakdown, vitals } from './insights';
 import { SleepContent } from './pages/Sleep';
 import { WorkoutList } from './pages/Trends';
@@ -48,6 +48,7 @@ export function Expand(props: { rect: DOMRect | null; title: string; onClose: ()
   const close = () => {
     if (closing) return;
     setClosing(true);
+    flow.beginExit();
     const el = ref.current;
     if (!el || reducedMotion() || typeof el.animate !== 'function') {
       props.onClose();
@@ -113,8 +114,8 @@ function RecoveryDetail(props: { date: string }) {
   const t = useTween(`${props.date}|${day?.recovery}`, 1600, 150, day !== undefined);
   const rec = day?.recovery ?? null;
   const color = recoveryHex(rec);
-  const br = recoveryBreakdown(day, prev);
-  const v = vitals(day, prev);
+  const br = useMemo(() => recoveryBreakdown(day, prev), [day, prev]);
+  const v = useMemo(() => vitals(day, prev), [day, prev]);
   const c = br?.components;
   const last14 = [...prev.slice(-13), ...(day ? [day] : [])];
 
@@ -201,17 +202,18 @@ function Contribution(props: { label: string; weight: string; value: number; sca
 
 function StrainDetail(props: { date: string }) {
   const s = useApp();
-  const w = useStore(workout);
+  const wVersion = useSelect(workout, (x) => x.version);
   const day = useDay(props.date, s.dataVersion);
   const prev = usePrevious(props.date, s.dataVersion);
   const [topic, setTopic] = useState<ExplainKey | null>(null);
   const b = dayBounds(props.date);
   const isToday = props.date === today();
-  const hr = useMinuteHr(b.start, Math.min(b.end, Math.floor(Date.now() / 1000) + 60), s.dataVersion);
+  // Fester Bereich (ganzer Tag): neu geladen wird nur, wenn sich die Daten ändern (dataVersion).
+  const hr = useMinuteHr(b.start, b.end, s.dataVersion);
   const t = useTween(`${props.date}|${day ? 1 : 0}`, 1600, 150, day !== undefined);
-  const reco = isToday ? buildRecommendation(day, prev, s.profile) : null;
+  const reco = useMemo(() => (isToday ? buildRecommendation(day, prev, s.profile) : null), [isToday, day, prev, s.profile]);
   const zoneMax = Math.max(1, ...(day?.zoneMinutes ?? [0]));
-  const workouts = (useWorkouts(w.version) ?? []).filter((x) => x.start >= b.start && x.start < b.end);
+  const workouts = (useWorkouts(wVersion) ?? []).filter((x) => x.start >= b.start && x.start < b.end);
   const labels = [0, 6, 12, 18].map((h) => ({ x: b.start + h * 3600, label: `${String(h).padStart(2, '0')}` }));
   const strain = day?.strain ?? null;
 
@@ -279,7 +281,7 @@ function VitalsDetail(props: { date: string; focus: 'hrv' | 'rhr' }) {
   const prev = usePrevious(props.date, s.dataVersion);
   const days = useDays(addDays(props.date, -29), props.date, s.dataVersion);
   const [topic, setTopic] = useState<ExplainKey | null>(null);
-  const v = vitals(day, prev);
+  const v = useMemo(() => vitals(day, prev), [day, prev]);
   const idx = (d: string) => Math.round((Date.parse(`${d}T12:00:00`) - Date.parse(`${props.date}T12:00:00`)) / 86400000);
   const hrvPts = days.filter((d) => d.sleep?.hrvRmssd).map((d) => ({ x: idx(d.date), y: d.sleep!.hrvRmssd! }));
   const rhrPts = days.filter((d) => d.sleep?.restingHr).map((d) => ({ x: idx(d.date), y: d.sleep!.restingHr! }));

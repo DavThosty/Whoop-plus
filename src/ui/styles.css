@@ -59,21 +59,22 @@ svg { overflow: visible; }
   background-color: var(--glow);
   -webkit-mask-image: radial-gradient(closest-side, #000 0%, rgba(0, 0, 0, 0.55) 38%, rgba(0, 0, 0, 0.16) 66%, transparent 100%);
   mask-image: radial-gradient(closest-side, #000 0%, rgba(0, 0, 0, 0.55) 38%, rgba(0, 0, 0, 0.16) 66%, transparent 100%);
-  opacity: 0.34;
+  opacity: 0.36;
   transition: background-color 1.6s var(--ease);
-  animation: breathe 9s ease-in-out infinite;
 }
-.bg-glow::after {
-  top: -22vh; width: 90vw; height: 52vh; opacity: 0.22; animation-delay: -4.5s; animation-duration: 11s;
-}
+.bg-glow::after { top: -22vh; width: 90vw; height: 52vh; opacity: 0.24; }
+/* Statisch – nur bei einem Farbwechsel einmal „atmen“ (keine Dauer-Animation hinter den Glaskarten). */
+.bg-glow.pulse::before, .bg-glow.pulse::after { animation: breathe 3.2s ease-in-out 1; }
 .bg-glow .grain {
   position: absolute; inset: 0;
   background: radial-gradient(120% 70% at 50% 120%, rgba(0, 0, 0, 0.9), transparent 60%);
 }
 @keyframes breathe {
-  0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.30; }
-  50% { transform: translateX(-50%) scale(1.08); opacity: 0.42; }
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.08); opacity: 0.48; }
 }
+/* Während ein Vollbild offen ist, steht alles darunter still. */
+.overlay-open .app *, .overlay-open .tabbar, .overlay-open .tabbar *, .overlay-open > .bg-glow::before, .overlay-open > .bg-glow::after { animation-play-state: paused !important; }
 
 /* ---------- App-Rahmen ---------- */
 .app {
@@ -288,7 +289,7 @@ svg { overflow: visible; }
 .btn.blue { background: linear-gradient(180deg, #2bb0ff, var(--blue)); color: #fff; border-color: transparent; box-shadow: 0 8px 26px -10px rgba(0, 147, 231, 0.8); }
 .btn.danger { color: #ff5a6e; }
 .btn.ghost { background: transparent; }
-.btn.small { min-height: 40px; font-size: 14px; border-radius: 13px; padding: 0 14px; width: auto; }
+.btn.small { min-height: 42px; font-size: 14px; border-radius: 13px; padding: 0 14px; width: auto; }
 .btn:disabled { opacity: 0.42; cursor: default; }
 .btns { display: grid; gap: 10px; }
 .btns.two { grid-template-columns: 1fr 1fr; }
@@ -461,7 +462,23 @@ ol.steps li::before { content: counter(s); position: absolute; left: 0; top: -1p
 .story .tap-zones { position: absolute; inset: 0; z-index: 1; display: grid; grid-template-columns: 1fr 2fr; }
 .story .tap-zones > div { cursor: pointer; }
 .story .content > * { position: relative; z-index: 2; }
-.story .story-cta { z-index: 3; }
+.story .story-cta { z-index: 3; pointer-events: auto; flex: none; margin-top: 14px; animation: rise 0.8s 0.6s var(--ease) both; }
+.story .slide { overflow: hidden; }
+.story .story-ringbox { margin: 18px 0 4px; display: flex; flex-direction: column; align-items: center; }
+.story .story-rec { font-size: 60px; }
+.story .story-reco-title { margin-top: 14px; font-size: 19px; }
+@media (max-height: 740px) {
+  .story .story-ring { width: 150px !important; height: 150px !important; }
+  .story .story-rec { font-size: 46px; }
+  .story .story-ringbox { margin: 8px 0 0; }
+  .story .story-reco-title { margin-top: 10px; font-size: 17px; }
+  .story .reco-text { font-size: 13.5px; }
+  .story .reco-stats { margin-top: 12px; }
+  .story .reco-stat { padding: 9px 12px; }
+  .story .reco-stat .v { font-size: 21px; }
+  .story .headline { font-size: 28px; }
+  .story .s-big { font-size: 56px; }
+}
 .story .sgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 18px; }
 
 /* Workout */
@@ -521,3 +538,14 @@ ol.steps li::before { content: counter(s); position: absolute; left: 0; top: -1p
 }
 @keyframes growY { from { transform: scaleY(0); } to { transform: scaleY(1); } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Mindestens 44 pt Trefferfläche, ohne die sichtbare Größe zu ändern. */
+.circle-btn, .chip, .helpbtn, .linkbtn { position: relative; }
+.circle-btn::after, .day-arrow::after, .chip::after, .helpbtn::after, .linkbtn::after, .btn.small::after { content: ''; position: absolute; }
+.circle-btn::after { inset: -4px; border-radius: 50%; }
+.day-arrow::after { inset: -6px; border-radius: 50%; }
+.chip::after { inset: -8px -4px; border-radius: 999px; }
+.helpbtn::after { inset: -7px; border-radius: 50%; }
+.linkbtn::after { inset: -12px -6px; }
+.btn.small { position: relative; }
+.btn.small::after { inset: -2px 0; }

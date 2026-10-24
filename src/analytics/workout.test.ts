@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeWorkout, WorkoutAccumulator, workoutZone, ZoneBuzzer } from './workout';
+import { activeSeconds, activeSegments, computeWorkout, normalizeWorkout, rebuildWorkout, WorkoutAccumulator, workoutZone, ZoneBuzzer } from './workout';
 import { strainFromTrimp } from './strain';
 import { keytelKcalPerMin } from './calories';
 import { TEST_PROFILE } from './test-fixtures';
@@ -122,5 +122,53 @@ describe('ZoneBuzzer', () => {
     b.update(2, 11_000);
     expect(b.update(2, 21_000)).toBeNull();
     expect(b.update(2, 40_000)).toBe(2);
+  });
+});
+
+describe('Unterbrochene Workouts', () => {
+  it('activeSegments / activeSeconds', () => {
+    expect(activeSegments(0, 100, [])).toEqual([[0, 100]]);
+    expect(activeSegments(0, 100, [[60, 70], [10, 20]])).toEqual([[0, 10], [20, 60], [70, 100]]);
+    // überlappende und herausragende Pausen
+    expect(activeSegments(0, 100, [[-5, 5], [50, 120], [55, 60]])).toEqual([[5, 50]]);
+    expect(activeSeconds(0, 100, [[10, 20], [60, 70]])).toBe(80);
+  });
+
+  it('rebuildWorkout ignoriert Pausen und entspricht einer durchgehenden Aufzeichnung', () => {
+    const samples = Array.from({ length: 900 }, (_, i) => ({ ts: 1000 + i, hr: 157 }));
+    // 300 s aktiv, 300 s Pause, 300 s aktiv
+    const r = rebuildWorkout(samples, 1000, 1900, [[1300, 1600]], P);
+    expect(r.durationS).toBe(600);
+    expect(r.stats.coveredS).toBe(600);
+    expect(r.stats.zoneSeconds).toEqual([0, 0, 600, 0, 0]);
+    expect(r.stats.trimp).toBe(30);
+    const straight = computeWorkout(Array.from({ length: 600 }, (_, i) => ({ ts: i, hr: 157 })), P);
+    expect(r.stats.strain).toBe(straight.strain);
+    expect(r.stats.kcal).toBe(straight.kcal);
+    // Der Akkumulator zählt nach dem Neuaufbau weiter
+    r.acc.add(2000, 157);
+    r.acc.finish(2005);
+    expect(r.acc.stats().coveredS).toBe(605);
+  });
+
+  it('rebuildWorkout ohne Samples', () => {
+    const r = rebuildWorkout([], 0, 120, [], P);
+    expect(r.durationS).toBe(120);
+    expect(r.stats.coveredS).toBe(0);
+    expect(r.stats.avgHr).toBeNull();
+  });
+
+  it('normalizeWorkout füllt Lücken und verwirft Unbrauchbares', () => {
+    expect(normalizeWorkout(null)).toBeNull();
+    expect(normalizeWorkout({ foo: 1 })).toBeNull();
+    const w = normalizeWorkout({ id: 100, start: 100, end: 50, zoneSeconds: [1, 'x', 3], hr: [{ ts: 1, hr: 90 }, { ts: 'a' }, null] })!;
+    expect(w.end).toBe(100);
+    expect(w.zoneSeconds).toEqual([1, 0, 3, 0, 0]);
+    expect(w.hr).toEqual([{ ts: 1, hr: 90 }]);
+    expect(w.strain).toBe(0);
+    expect(w.avgHr).toBeNull();
+    const ok = normalizeWorkout({ id: 5, start: 5, end: 65, durationS: 60, strain: 4.2, trimp: 9, kcal: 50, avgHr: 140, maxHr: 160, zoneSeconds: [0, 0, 60, 0, 0], hr: [] })!;
+    expect(ok.strain).toBe(4.2);
+    expect(ok.durationS).toBe(60);
   });
 });
