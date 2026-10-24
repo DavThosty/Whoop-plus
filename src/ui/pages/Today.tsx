@@ -233,7 +233,7 @@ function Welcome(props: { goTo: (tab: Tab) => void }) {
     <div class="rise">
       <section class="glass card center" style={{ paddingTop: 28 }}>
         <Ring size={120} stroke={12} fraction={0.72} color={COLORS.green} t={t} class="welcome-ring" />
-        <h2 style={{ fontSize: 26, letterSpacing: '-0.035em', margin: '0 0 8px' }}>Willkommen bei Whoop Plus</h2>
+        <h2 style={{ fontSize: 26, letterSpacing: '-0.035em', margin: '0 0 8px', textWrap: 'balance' } as never}>Willkommen bei Whoop Plus</h2>
         <p class="muted" style={{ margin: '0 0 20px', fontSize: 15 }}>
           Dein WHOOP 4.0 – ohne Abo. Schlaf, HRV, Recovery und Strain werden direkt auf diesem iPhone berechnet.
         </p>
