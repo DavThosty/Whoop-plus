@@ -175,7 +175,7 @@ describe('GATT', () => {
   it('verbindet mit Timeout und findet Dienste/Characteristics per Web-Bluetooth-Namen', async () => {
     const { server } = await connected();
     expect(server.connected).toBe(true);
-    expect(m.BleClient.connect).toHaveBeenCalledWith('dev-1', expect.any(Function), { timeout: 25_000 });
+    expect(m.BleClient.connect).toHaveBeenCalledWith('dev-1', expect.any(Function), { timeout: 18_000 });
     const svc = await server.getPrimaryService(SERVICE);
     expect(svc.uuid).toBe(SERVICE);
     const hr = await server.getPrimaryService(HEART_RATE_SERVICE);
@@ -200,7 +200,7 @@ describe('GATT', () => {
     ch.addEventListener('characteristicvaluechanged', (ev) => seen.push((ev.target as unknown as BluetoothRemoteGATTCharacteristic).value));
     await ch.startNotifications();
     const [id, s, c, cb, opts] = m.BleClient.startNotifications.mock.calls[0];
-    expect([id, s, c, opts]).toEqual(['dev-1', SERVICE, DATA_FROM_STRAP, { timeout: 35_000 }]);
+    expect([id, s, c, opts]).toEqual(['dev-1', SERVICE, DATA_FROM_STRAP, { timeout: 9_000 }]);
     const dv = new DataView(new Uint8Array([0xaa, 1, 2]).buffer);
     cb(dv);
     expect(seen).toEqual([dv]);
@@ -218,15 +218,32 @@ describe('GATT', () => {
     const dv: DataView = m.BleClient.write.mock.calls[0][3];
     expect([...new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)]).toEqual([1, 2, 3]);
     expect(m.BleClient.write.mock.calls[0].slice(0, 3)).toEqual(['dev-1', SERVICE, CMD_TO_STRAP]);
-    expect(m.BleClient.write.mock.calls[0][4]).toEqual({ timeout: 35_000 });
+    // Erster bestätigter Write der Verbindung: langer Timeout für den Kopplungsdialog …
+    expect(m.BleClient.write.mock.calls[0][4]).toEqual({ timeout: 29_000 });
 
+    // … alle weiteren knapp unter WhoopDevice' 10 s.
     await ch.writeValue(new Uint8Array([7]).buffer);
     expect(m.BleClient.write).toHaveBeenCalledTimes(2);
+    expect(m.BleClient.write.mock.calls[1][4]).toEqual({ timeout: 9_000 });
     await ch.writeValueWithoutResponse!(new Uint8Array([8]));
     expect(m.BleClient.writeWithoutResponse).toHaveBeenCalledTimes(1);
+    expect(m.BleClient.writeWithoutResponse.mock.calls[0][4]).toEqual({ timeout: 9_000 });
 
     const v = await ch.readValue();
     expect(v.getUint8(0)).toBe(42);
+  });
+
+  it('gibt jeder neuen Verbindung wieder den langen Timeout für den ersten Write', async () => {
+    const { server } = await connected();
+    const ch = await (await server.getPrimaryService(SERVICE)).getCharacteristic(CMD_TO_STRAP);
+    await ch.writeValueWithoutResponse!(new Uint8Array([1])); // ohne Antwort zählt nicht als Kopplungs-Write
+    await ch.writeValueWithResponse!(new Uint8Array([1]));
+    await ch.writeValueWithResponse!(new Uint8Array([2]));
+    server.disconnect();
+    await server.connect();
+    const ch2 = await (await server.getPrimaryService(SERVICE)).getCharacteristic(CMD_TO_STRAP);
+    await ch2.writeValueWithResponse!(new Uint8Array([3]));
+    expect(m.BleClient.write.mock.calls.map((c) => c[4].timeout)).toEqual([29_000, 9_000, 29_000]);
   });
 
   it('meldet einen Verbindungsverlust des Plugins einmal als gattserverdisconnected', async () => {
@@ -271,6 +288,62 @@ describe('GATT', () => {
     await expect(p).rejects.toThrow(/abgebrochen/);
     expect(dev.gatt!.connected).toBe(false);
     expect(m.BluetoothLe.disconnect).toHaveBeenCalledTimes(2);
+  });
+
+  it('connect() ist reentrant: ein laufender Aufbau wird geteilt, verbunden kehrt sofort zurück', async () => {
+    let finish!: () => void;
+    m.BleClient.connect.mockImplementation(() => new Promise<void>((r) => (finish = r)));
+    const bt = new CapacitorBluetooth({ storage: memStorage() });
+    const dev = await bt.requestDevice({});
+    const onDisc = vi.fn();
+    dev.addEventListener('gattserverdisconnected', onDisc);
+    const p1 = dev.gatt!.connect();
+    const p2 = dev.gatt!.connect();
+    expect(p2).toBe(p1);
+    await vi.waitFor(() => expect(m.BleClient.connect).toHaveBeenCalled());
+    finish();
+    expect(await p1).toBe(dev.gatt);
+    expect(await p2).toBe(dev.gatt);
+    expect(m.BleClient.connect).toHaveBeenCalledTimes(1);
+    expect(dev.gatt!.connected).toBe(true);
+
+    // Bereits verbunden: kein weiterer Plugin-Aufruf.
+    await dev.gatt!.connect();
+    expect(m.BleClient.connect).toHaveBeenCalledTimes(1);
+
+    // Der Callback der (einzigen) Verbindung gehört zur aktuellen Generation und trennt korrekt.
+    (m.BleClient.connect.mock.calls[0][1] as (id: string) => void)('dev-1');
+    expect(dev.gatt!.connected).toBe(false);
+    expect(onDisc).toHaveBeenCalledTimes(1);
+  });
+
+  it('startet nach disconnect() während des Aufbaus einen neuen Aufbau statt den alten zu teilen', async () => {
+    const finishers: (() => void)[] = [];
+    m.BleClient.connect.mockImplementation(() => new Promise<void>((r) => finishers.push(r)));
+    const bt = new CapacitorBluetooth({ storage: memStorage() });
+    const dev = await bt.requestDevice({});
+    const p1 = dev.gatt!.connect();
+    await vi.waitFor(() => expect(finishers).toHaveLength(1));
+    dev.gatt!.disconnect();
+    const p2 = dev.gatt!.connect();
+    expect(p2).not.toBe(p1);
+    await vi.waitFor(() => expect(finishers).toHaveLength(2));
+    finishers[0]();
+    await expect(p1).rejects.toThrow(/abgebrochen/);
+    finishers[1]();
+    await expect(p2).resolves.toBe(dev.gatt);
+    expect(dev.gatt!.connected).toBe(true);
+  });
+
+  it('übersetzt den connect-Timeout des Plugins in eine verständliche Meldung', async () => {
+    m.BleClient.connect.mockRejectedValue(new Error('Connection timeout.'));
+    const bt = new CapacitorBluetooth({ storage: memStorage() });
+    const dev = await bt.requestDevice({});
+    await expect(dev.gatt!.connect()).rejects.toThrow(/Band nicht erreichbar/);
+    expect(dev.gatt!.connected).toBe(false);
+    // Danach ist ein neuer Versuch möglich.
+    m.BleClient.connect.mockResolvedValue(undefined);
+    await expect(dev.gatt!.connect()).resolves.toBe(dev.gatt);
   });
 });
 

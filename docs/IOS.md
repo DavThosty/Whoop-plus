@@ -179,23 +179,23 @@ Wichtig: **Vor dem ersten eigenen App-Install SideStore einmal so verlängern** 
 2. *Einstellungen → Bluetooth* → bei „WHOOP …“ auf **ⓘ** → **„Dieses Gerät ignorieren“**. So startet die
    Kopplung mit Whoop Plus sauber neu.
 3. Band laden und anlegen.
-4. **Whoop Plus** öffnen. iOS fragt nach **Bluetooth** → **Erlauben**.
+4. **Whoop Plus** öffnen und im Tab **Band** auf **„Band verbinden“** tippen.
+5. Beim ersten Tippen fragt iOS nach **Bluetooth** → **Erlauben**.
    (Abgelehnt? *Einstellungen → Whoop Plus → Bluetooth* einschalten.)
-5. Im Tab **Band** auf **„Band verbinden“** tippen. Es erscheint eine Liste „Suche WHOOP-Band …“ – dein
-   Band (z. B. „WHOOP 4C…“) antippen.
+   Danach erscheint eine Liste „Suche WHOOP-Band …“ – dein Band (z. B. „WHOOP 4C…“) antippen.
 6. iOS zeigt eine **Bluetooth-Kopplungsanfrage** → **Koppeln**. Ohne Kopplung ignoriert das Band alle
    Befehle. Du hast dafür ca. 30 Sekunden.
 7. Danach stellt die App die Uhr des Bands und lädt den Verlauf. Der erste Sync kann bei vollem Bandspeicher
    (bis ca. 14 Tage) einige Minuten dauern – App dabei geöffnet lassen.
 8. Im Tab **Profil** Alter, Gewicht usw. eintragen.
 
-Die App merkt sich das Band. Ab jetzt verbindet sie sich beim Öffnen **automatisch ohne Auswahlliste**.
+Die App merkt sich das gewählte Band, damit später keine Auswahlliste mehr nötig ist.
 
 ## 7. So funktioniert der Sync im Alltag
 
-- **Beim Öffnen der App** und **bei jeder Rückkehr in die App** verbindet sie sich selbst mit dem gemerkten
-  Band und lädt neue Daten, wenn der letzte Sync älter als 5 Minuten ist. Ist das Band nicht in Reichweite,
-  passiert nichts Störendes – nur ein Eintrag im Protokoll (Tab *Band → Protokoll*).
+- Die App versucht, sich beim Öffnen mit dem gemerkten Band zu verbinden und neue Daten zu laden. Klappt
+  das nicht (z. B. Band außer Reichweite), im Tab *Band* auf „Band verbinden“ tippen. Einzelheiten zur
+  Verbindung stehen im Tab *Band → Protokoll*.
 - Solange die App offen und verbunden ist, synchronisiert sie zusätzlich alle 15 Minuten.
 - Beim Wechsel in den Hintergrund trennt die App die Verbindung **nicht** (Hintergrundmodus
   „bluetooth-central“). Kurz zu einer anderen App wechseln und zurück geht also ohne neuen Verbindungsaufbau.
@@ -204,7 +204,6 @@ Die App merkt sich das Band. Ab jetzt verbindet sie sich beim Öffnen **automati
   App öffnen → ein paar Sekunden bis Minuten warten, bis „Letzter Sync: gerade eben“ dasteht.
 - Das Band speichert **ungefähr 14 Tage**. Öffne die App also mindestens alle paar Tage, sonst gehen die
   ältesten Daten auf dem Band verloren.
-- Hast du selbst auf **„Trennen“** getippt, verbindet sich die App bis zum nächsten Start nicht von selbst.
 
 ---
 
@@ -220,7 +219,7 @@ Die App merkt sich das Band. Ab jetzt verbindet sie sich beim Öffnen **automati
 - Die Kopplungsanfrage wurde nicht bestätigt oder ist abgelaufen. In *Einstellungen → Bluetooth* das Band
   ignorieren und neu verbinden.
 
-**Die App verbindet sich nach dem Öffnen nicht automatisch**
+**Die App verbindet sich nicht mit dem Band**
 - Band außer Reichweite oder mit einer anderen App verbunden. Im Tab *Band* auf „Band verbinden“ tippen.
 - Nach einem Band-Tausch: einmal „Band verbinden“ und das neue Band wählen – die App merkt sich dann das neue.
 
