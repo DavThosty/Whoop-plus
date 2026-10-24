@@ -20,12 +20,22 @@
       "iconURL": "https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/icon.png",
       "tintColor": "#16ec06",
       "category": "lifestyle",
-      "version": "0.1.13",
-      "versionDate": "2026-10-24T20:48:57Z",
-      "versionDescription": "Automatische Sicherung und Erinnerung vor dem Ablauf\n\nDie App sichert deine Daten jetzt jeden Tag selbst (Dateien-App → Auf meinem iPhone → Whoop Plus → Sicherungen) und erinnert dich rechtzeitig per Mitteilung, bevor die App in SideStore verlängert werden muss. Unter „Mehr“ siehst du, bis wann die App gültig ist.",
-      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.13.ipa",
-      "size": 1137868,
+      "version": "0.1.17",
+      "versionDate": "2026-10-24T21:23:46Z",
+      "versionDescription": "Einrichtungshelfer für Windows\n\nNeu: WhoopPlus-Setup.exe richtet SideStore am Windows-PC weitgehend automatisch ein – ein Knopf „Los geht's“, erledigte Schritte werden übersprungen, und bei Problemen (SideStore abgelaufen, Verbindungsfehler, neues iPhone) führt er dich nur durch das Nötige.",
+      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.17.ipa",
+      "size": 1137924,
       "versions": [
+        {
+          "version": "0.1.17",
+          "buildVersion": "17",
+          "date": "2026-10-24T21:23:46Z",
+          "localizedDescription": "Einrichtungshelfer für Windows\n\nNeu: WhoopPlus-Setup.exe richtet SideStore am Windows-PC weitgehend automatisch ein – ein Knopf „Los geht's“, erledigte Schritte werden übersprungen, und bei Problemen (SideStore abgelaufen, Verbindungsfehler, neues iPhone) führt er dich nur durch das Nötige.",
+          "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.17.ipa",
+          "size": 1137924,
+          "sha256": "8d02ed10d75286db622c617c15b012c3aba0548c14d6e258d904c1dd1d44c919",
+          "minOSVersion": "15.0"
+        },
         {
           "version": "0.1.13",
           "buildVersion": "13",
