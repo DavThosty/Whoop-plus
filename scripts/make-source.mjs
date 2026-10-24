@@ -8,7 +8,9 @@
 //   node scripts/make-source.mjs meta --info Info.json --changelog changelog.txt --version 0.1.12 --build 12 --out release-meta.json
 //        (prüft die Versionsnummern im gebauten Info.plist und sammelt minOSVersion + Datenschutz-Texte)
 //   node scripts/make-source.mjs source --meta release-meta.json --ipa WhoopPlus-0.1.12.ipa \
-//        [--previous alt/source.json] --out source.json [--removed removed.txt]
+//        [--previous alt/source.json] (--out source.json [--removed removed.txt] | --check)
+//        Exit-Code 3: Der Build ist nicht neuer als der neueste in der Quelle (z. B. „Re-run“ eines alten Laufs)
+//        – dann wird nichts veröffentlicht. `--check` prüft nur, ohne etwas zu schreiben.
 //
 // Format der Quelle: https://faq.altstore.io/developers/make-a-source (SideStore ist dazu kompatibel,
 // https://docs.sidestore.io/docs/advanced/app-sources).
@@ -17,7 +19,8 @@ import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const REPO = 'DavThosty/Whoop-plus';
+/** owner/repo – im Workflow aus GITHUB_REPOSITORY, lokal das Original-Repository. */
+export const REPO = process.env.GITHUB_REPOSITORY?.trim() || 'DavThosty/Whoop-plus';
 export const BUNDLE_ID = 'de.steinerkn.whoopplus';
 export const RELEASE_TAG = 'ios-latest';
 /** Branch, auf dem der Workflow source.json und das Icon ablegt (stabile raw-URL). */
@@ -29,6 +32,25 @@ export const RELEASE_DOWNLOAD = `https://github.com/${REPO}/releases/download/${
 export const KEEP_VERSIONS = 10;
 export const MAX_CHANGELOG = 600;
 export const DEFAULT_CHANGELOG = 'Kleinere Verbesserungen und Fehlerbehebungen.';
+/** Exit-Code der CLI, wenn der Build veraltet ist (kein Fehler, aber nichts zu veröffentlichen). */
+export const EXIT_STALE = 3;
+
+/** Der Build ist nicht neuer als der neueste bereits veröffentlichte – würde alle Nutzer zurückstufen. */
+export class StaleBuildError extends Error {
+  constructor(build, newest) {
+    super(`Build ${build} ist nicht neuer als der neueste veröffentlichte Build ${newest} – nichts zu veröffentlichen.`);
+    this.name = 'StaleBuildError';
+    this.code = 'STALE_BUILD';
+    this.build = build;
+    this.newest = newest;
+  }
+}
+
+/** Build-Nummer eines Eintrags als Zahl (ungültig → −∞, landet ganz hinten). */
+const buildNumber = (v) => {
+  const n = Number(v?.buildVersion);
+  return v?.buildVersion != null && String(v.buildVersion).trim() !== '' && Number.isFinite(n) ? n : -Infinity;
+};
 
 /** Versionsname der IPA im Release, eindeutig je Version. */
 export const ipaName = (version) => `WhoopPlus-${version}.ipa`;
@@ -137,13 +159,15 @@ const APP_DESCRIPTION = [
 ].join('\n');
 
 /**
- * Baut die neue source.json. Die neue Version steht vorne (SideStore nimmt die erste als „neueste“),
- * ältere Versionen aus `previous` bleiben bis `keep` erhalten. `removedAssets`: IPA-Dateien im Release,
- * die nicht mehr referenziert werden und gelöscht werden können.
+ * Baut die neue source.json. Versionen stehen nach Build-Nummer absteigend (SideStore nimmt die erste als
+ * „neueste“), ältere Versionen aus `previous` bleiben bis `keep` erhalten. `removedAssets`: IPA-Dateien im
+ * Release, die nicht mehr referenziert werden und gelöscht werden können.
+ * Wirft `StaleBuildError`, wenn `build` nicht größer als der neueste Build in `previous` ist.
  */
 export function makeSource(p) {
   const { previous = null, version, build, changelog, size, sha256, date = isoDate(), minOSVersion = '15.0', privacy = {}, keep = KEEP_VERSIONS } = p;
   if (!version || !build) throw new Error('version und build sind nötig');
+  if (!/^\d+$/.test(String(build))) throw new Error(`Ungültige Build-Nummer: ${build}`);
   if (!Number.isInteger(size) || size <= 0) throw new Error('size (Bytes) fehlt');
   const entry = {
     version: String(version),
@@ -157,10 +181,14 @@ export function makeSource(p) {
   };
 
   const prevApp = Array.isArray(previous?.apps) ? previous.apps.find((a) => a?.bundleIdentifier === BUNDLE_ID) : null;
-  const prevVersions = (Array.isArray(prevApp?.versions) ? prevApp.versions : []).filter(
-    (v) => v && typeof v.version === 'string' && typeof v.downloadURL === 'string' && v.version !== entry.version && v.downloadURL !== entry.downloadURL,
+  const validPrev = (Array.isArray(prevApp?.versions) ? prevApp.versions : []).filter(
+    (v) => v && typeof v.version === 'string' && typeof v.downloadURL === 'string',
   );
-  const all = [entry, ...prevVersions];
+  const newest = Math.max(-Infinity, ...validPrev.map(buildNumber));
+  if (newest >= Number(build)) throw new StaleBuildError(Number(build), newest);
+  const prevVersions = validPrev.filter((v) => v.version !== entry.version && v.downloadURL !== entry.downloadURL);
+  // Stabil nach Build absteigend sortieren – unabhängig davon, in welcher Reihenfolge die alte Quelle war.
+  const all = [entry, ...prevVersions].sort((a, b) => buildNumber(b) - buildNumber(a));
   const kept = all.slice(0, Math.max(1, keep));
   const keptAssets = new Set(kept.map((v) => releaseAssetName(v.downloadURL)).filter(Boolean));
   const removedAssets = [...new Set(all.slice(kept.length).map((v) => releaseAssetName(v.downloadURL)))].filter(
@@ -188,6 +216,12 @@ export function makeSource(p) {
         iconURL: ICON_URL,
         tintColor: '#16ec06',
         category: 'lifestyle',
+        // Veraltete, aber weiter unterstützte Felder für ältere AltStore-/SideStore-Versionen (= neueste Version).
+        version: kept[0].version,
+        versionDate: kept[0].date,
+        versionDescription: kept[0].localizedDescription,
+        downloadURL: kept[0].downloadURL,
+        size: kept[0].size,
         versions: kept,
         appPermissions: {
           entitlements: [],
@@ -258,7 +292,7 @@ function main(argv) {
   }
   if (cmd === 'source') {
     const a = args(rest);
-    if (!a.meta || !a.ipa || !a.out) throw new Error('--meta, --ipa und --out sind nötig');
+    if (!a.meta || !a.ipa || (!a.out && !a.check)) throw new Error('--meta, --ipa und --out (oder --check) sind nötig');
     const meta = JSON.parse(readFileSync(a.meta, 'utf8'));
     if (basename(a.ipa) !== ipaName(meta.version)) throw new Error(`IPA muss ${ipaName(meta.version)} heißen`);
     let previous = null;
@@ -279,6 +313,10 @@ function main(argv) {
       size: statSync(a.ipa).size,
       sha256: sha256File(a.ipa),
     });
+    if (a.check) {
+      console.log(`Prüfung ok: ${meta.version} (${meta.build}) ist neuer als alles in der Quelle.`);
+      return;
+    }
     writeFileSync(a.out, `${JSON.stringify(source, null, 2)}\n`);
     if (typeof a.removed === 'string') writeFileSync(a.removed, removedAssets.map((n) => `${n}\n`).join(''));
     console.log(`source.json: ${source.apps[0].versions.length} Version(en), neueste ${meta.version} (${meta.build}); zu löschen: ${removedAssets.join(', ') || '–'}`);
@@ -292,6 +330,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     main(process.argv.slice(2));
   } catch (e) {
     console.error(e instanceof Error ? e.message : e);
-    process.exit(1);
+    process.exit(e instanceof StaleBuildError ? EXIT_STALE : 1);
   }
 }

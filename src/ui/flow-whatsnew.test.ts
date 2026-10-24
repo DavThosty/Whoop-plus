@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // „Was ist neu“ im Zusammenspiel mit den anderen Vollbildern (Speicher, App-Zustand und Workout sind Stubs).
 const h = vi.hoisted(() => ({
   kv: new Map<string, unknown>(),
+  day: undefined as unknown,
   app: {
     state: { conn: 'disconnected', postSync: false, computing: false, profile: null as unknown, lastSync: null as number | null, stats: { oldest: null, newest: null, count: 0 } as unknown },
     listeners: [] as ((s: unknown) => void)[],
@@ -16,7 +17,7 @@ const h = vi.hoisted(() => ({
 vi.mock('../store/db', () => ({
   getKv: vi.fn(async (k: string) => h.kv.get(k)),
   setKv: vi.fn(async (k: string, v: unknown) => void h.kv.set(k, v)),
-  getDay: vi.fn(async () => undefined),
+  getDay: vi.fn(async () => h.day),
 }));
 vi.mock('./controller', () => ({ app: h.app }));
 vi.mock('./workout', () => ({ workout: h.workout }));
@@ -28,6 +29,7 @@ type Internals = { whatsNewDone: boolean; checkingWhatsNew: boolean };
 
 beforeEach(() => {
   h.kv.clear();
+  h.day = undefined;
   Object.assign(h.app.state, { conn: 'disconnected', postSync: false, computing: false, profile: null, lastSync: null, stats: { oldest: null, newest: null, count: 0 } });
   h.workout.state = { phase: 'idle', recovery: null };
   flow.state = { ceremony: false, ceremonyAt: 0, exiting: false, story: null, detail: null, connectPrompt: false, whatsNew: null };
@@ -107,5 +109,42 @@ describe('„Was ist neu“', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('gleichzeitig mit der Morgen-Story', () => {
+    const morning = () => {
+      updatedUser();
+      h.day = { sleep: { end: new Date('2026-10-24T07:00:00').getTime() / 1000 } };
+      vi.useFakeTimers({ now: new Date('2026-10-24T08:00:00'), toFake: ['Date'] });
+    };
+
+    it('Story und „Was ist neu“ gleichzeitig angestoßen: nur die Story öffnet, „Was ist neu“ danach', async () => {
+      morning();
+      try {
+        await Promise.all([flow.maybeAutoStory(), flow.maybeWhatsNew(), flow.maybeAutoStory().then(() => flow.maybeWhatsNew())]);
+        expect(flow.state.story).toEqual({ date: '2026-10-24' });
+        expect(flow.state.whatsNew).toBeNull();
+        expect(h.kv.get('storyShownDate')).toBe('2026-10-24');
+        flow.closeStory();
+        await flow.maybeAutoStory().then(() => flow.maybeWhatsNew());
+        expect(flow.state.story).toBeNull();
+        expect(flow.state.whatsNew).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('„Was ist neu“ zuerst angestoßen, Story danach: trotzdem nie beide offen', async () => {
+      morning();
+      try {
+        const a = flow.maybeWhatsNew();
+        const b = flow.maybeAutoStory();
+        await Promise.all([a, b]);
+        expect(!!flow.state.story && !!flow.state.whatsNew).toBe(false);
+        expect(!!flow.state.story || !!flow.state.whatsNew).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

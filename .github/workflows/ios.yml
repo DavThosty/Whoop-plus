@@ -66,7 +66,10 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          eval "$(node scripts/make-source.mjs version "$RUN_NUMBER")"
+          # Erst ausführen, dann auswerten – sonst ginge ein Fehler von node im eval unter.
+          out="$(node scripts/make-source.mjs version "$RUN_NUMBER")"
+          eval "$out"
+          [ -n "${marketing:-}" ] && [ -n "${build:-}" ] || { echo "::error::Versionsnummer fehlt"; exit 1; }
           {
             echo "marketing=$marketing"
             echo "build=$build"
@@ -124,7 +127,11 @@ jobs:
         run: |
           APP=build/Build/Products/Release-iphoneos/App.app
           test -f "$APP/public/index.html" || { echo "::error::Web-Dateien fehlen in App.app"; exit 1; }
-          grep -rqF "$MARKETING" "$APP/public/assets" || { echo "::error::Version $MARKETING fehlt in der Web-Oberfläche"; exit 1; }
+          [ -n "$MARKETING" ] && [ -n "$BUILD" ] || { echo "::error::Versionsnummer fehlt"; exit 1; }
+          SHORT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")"
+          BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")"
+          [ "$SHORT" = "$MARKETING" ] || { echo "::error::CFBundleShortVersionString '$SHORT' ≠ '$MARKETING'"; exit 1; }
+          [ "$BUNDLE" = "$BUILD" ] || { echo "::error::CFBundleVersion '$BUNDLE' ≠ '$BUILD'"; exit 1; }
           plutil -convert json -o "$RUNNER_TEMP/info.json" "$APP/Info.plist"
           # Prüft CFBundleShortVersionString, CFBundleVersion und Bundle-ID (SideStore vergleicht sie mit der Quelle)
           # und sammelt minOSVersion und die Datenschutz-Texte für source.json.
@@ -177,13 +184,39 @@ jobs:
           name: ${{ needs.build.outputs.artifact }}
           path: ${{ runner.temp }}/out
 
+      # Zuerst prüfen: Ist dieser Build neuer als der neueste in der Quelle? Bei einem „Re-run“ eines alten
+      # Laufs wird nichts verändert (kein Tag, keine IPA, keine Quelle) – sonst bekämen alle eine ältere Version.
+      - name: Prüfen, ob dieser Build neuer ist
+        id: check
+        run: |
+          OUT="$RUNNER_TEMP/out"
+          [ -n "$MARKETING" ] && [ -n "$BUILD" ] || { echo "::error::Versionsnummer fehlt"; exit 1; }
+          test -f "$OUT/$IPA_NAME" || { echo "::error::$IPA_NAME fehlt"; exit 1; }
+          test -f "$OUT/release-meta.json" || { echo "::error::release-meta.json fehlt"; exit 1; }
+          # Eindeutige Datei je Version für SideStore; WhoopPlus.ipa bleibt als „neueste“ für die manuelle Installation.
+          cp "$OUT/$IPA_NAME" "$OUT/WhoopPlus-$MARKETING.ipa"
+          rm -f "$RUNNER_TEMP/previous.json"
+          if git fetch --depth=1 origin "refs/heads/$SOURCE_BRANCH"; then
+            git show FETCH_HEAD:source.json > "$RUNNER_TEMP/previous.json" || rm -f "$RUNNER_TEMP/previous.json"
+          fi
+          rc=0
+          node scripts/make-source.mjs source --check --meta "$OUT/release-meta.json" --ipa "$OUT/WhoopPlus-$MARKETING.ipa" \
+            --previous "$RUNNER_TEMP/previous.json" || rc=$?
+          case "$rc" in
+            0) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            3)
+              echo "::notice::Build $BUILD ist nicht neuer als die veröffentlichte Version – Release und Quelle bleiben unverändert."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *) exit "$rc" ;;
+          esac
+
       - name: Tag verschieben und Release aktualisieren (ohne Lücke)
+        if: steps.check.outputs.publish == 'true'
         working-directory: ${{ runner.temp }}/out
         run: |
-          test -f "$IPA_NAME" && test -f release-meta.json
-          # Eindeutige Datei je Version für SideStore; WhoopPlus.ipa bleibt als „neueste“ für die manuelle Installation.
           VERSIONED="WhoopPlus-$MARKETING.ipa"
-          cp "$IPA_NAME" "$VERSIONED"
+          test -f "$VERSIONED" || exit 1
           TITLE="Whoop Plus iOS $MARKETING ($BUILD)"
           {
             echo "Automatischer Build $MARKETING ($BUILD) von ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M UTC')."
@@ -209,6 +242,7 @@ jobs:
 
       # Erst nach dem Hochladen der IPA, damit die Quelle nie auf eine fehlende Datei zeigt.
       - name: SideStore-Quelle aktualisieren (Branch "sidestore")
+        if: steps.check.outputs.publish == 'true'
         run: |
           OUT="$RUNNER_TEMP/out"
           cp scripts/make-source.mjs resources/icon-512.png "$RUNNER_TEMP/"
@@ -230,6 +264,7 @@ jobs:
           echo "Quelle: $SOURCE_URL"
 
       - name: Alte Versionen aus dem Release entfernen
+        if: steps.check.outputs.publish == 'true'
         working-directory: ${{ runner.temp }}/out
         run: |
           while IFS= read -r name; do

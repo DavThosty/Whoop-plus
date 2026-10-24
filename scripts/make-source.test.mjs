@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  BUNDLE_ID, DEFAULT_CHANGELOG, MAX_CHANGELOG, RELEASE_DOWNLOAD, cleanChangelog, computeVersion, ipaName, isoDate, makeMeta, makeSource, releaseAssetName,
+  BUNDLE_ID, DEFAULT_CHANGELOG, MAX_CHANGELOG, RELEASE_DOWNLOAD, EXIT_STALE, StaleBuildError, cleanChangelog, computeVersion, ipaName, isoDate, makeMeta, makeSource, releaseAssetName,
 } from './make-source.mjs';
 
 const SCRIPT = new URL('./make-source.mjs', import.meta.url).pathname;
@@ -99,6 +99,11 @@ describe('source.json', () => {
     expect(app).toMatchObject({ name: 'Whoop Plus', bundleIdentifier: BUNDLE_ID, developerName: 'DavThosty' });
     expect(app.localizedDescription).toContain('WHOOP');
     expect(app).not.toHaveProperty('marketplaceID'); // sonst hält SideStore die Quelle für „notarisiert“ und blockiert sie
+    // Veraltete Felder auf App-Ebene für ältere AltStore-/SideStore-Versionen = neueste Version.
+    expect(app).toMatchObject({
+      version: '0.1.12', versionDate: '2026-10-24T10:00:00Z', versionDescription: 'Neu: Wecker',
+      downloadURL: `${RELEASE_DOWNLOAD}WhoopPlus-0.1.12.ipa`, size: 1234,
+    });
     expect(app.appPermissions).toEqual({ entitlements: [], privacy: { NSBluetoothAlwaysUsageDescription: 'Bluetooth' } });
     expect(app.versions).toEqual([
       {
@@ -118,7 +123,7 @@ describe('source.json', () => {
     expect(makeSource({ ...base, changelog: '  ' }).source.apps[0].versions[0].localizedDescription).toBe(DEFAULT_CHANGELOG);
   });
 
-  it('neue Version vorne, alte bleiben, gleiche Version wird ersetzt, ab 10 wird gekürzt', () => {
+  it('neue Version vorne, alte bleiben, ab 10 wird gekürzt', () => {
     let prev = null;
     const removed = [];
     for (let n = 1; n <= 12; n++) {
@@ -129,11 +134,27 @@ describe('source.json', () => {
     const versions = prev.apps[0].versions.map((v) => v.version);
     expect(versions).toEqual(['0.1.12', '0.1.11', '0.1.10', '0.1.9', '0.1.8', '0.1.7', '0.1.6', '0.1.5', '0.1.4', '0.1.3']);
     expect(removed).toEqual(['WhoopPlus-0.1.1.ipa', 'WhoopPlus-0.1.2.ipa']);
-    // Erneuter Lauf derselben Version (z. B. „Re-run“): ersetzt statt doppelt.
-    const again = makeSource({ ...base, version: '0.1.12', build: '12', changelog: 'neu', previous: prev });
-    expect(again.source.apps[0].versions.filter((v) => v.version === '0.1.12')).toHaveLength(1);
-    expect(again.source.apps[0].versions[0].localizedDescription).toBe('neu');
-    expect(again.removedAssets).toEqual([]);
+  });
+
+  it('Re-run eines alten oder desselben Laufs stuft niemanden zurück (StaleBuildError)', () => {
+    const prev = makeSource({ ...base }).source; // Build 12 veröffentlicht
+    expect(() => makeSource({ ...base, previous: prev })).toThrow(StaleBuildError);
+    expect(() => makeSource({ ...base, version: '0.1.9', build: '9', previous: prev })).toThrow(/nicht neuer/);
+    try {
+      makeSource({ ...base, version: '0.1.9', build: '9', previous: prev });
+    } catch (e) {
+      expect(e).toMatchObject({ code: 'STALE_BUILD', build: 9, newest: 12 });
+    }
+    expect(makeSource({ ...base, version: '0.1.13', build: '13', previous: prev }).source.apps[0].versions.map((v) => v.buildVersion)).toEqual(['13', '12']);
+  });
+
+  it('sortiert nach Build-Nummer (numerisch), auch wenn die alte Quelle durcheinander ist', () => {
+    const v = (b) => ({ version: `0.1.${b}`, buildVersion: String(b), date: '2026-01-01', downloadURL: `${RELEASE_DOWNLOAD}WhoopPlus-0.1.${b}.ipa`, size: 1 });
+    const prev = { apps: [{ bundleIdentifier: BUNDLE_ID, versions: [v(9), v(100), v(10), { version: 'x', downloadURL: 'https://example.com/x.ipa' }] }] };
+    const r = makeSource({ ...base, version: '0.1.101', build: '101', previous: prev });
+    expect(r.source.apps[0].versions.map((x) => x.version)).toEqual(['0.1.101', '0.1.100', '0.1.10', '0.1.9', 'x']);
+    expect(r.source.apps[0].version).toBe('0.1.101');
+    expect(() => makeSource({ ...base, build: 'abc' })).toThrow();
   });
 
   it('kaputte oder fremde vorherige Quelle schadet nicht; fremde URLs werden nie gelöscht', () => {
@@ -145,6 +166,39 @@ describe('source.json', () => {
     expect(releaseAssetName(`${RELEASE_DOWNLOAD}WhoopPlus-0.1.3.ipa`)).toBe('WhoopPlus-0.1.3.ipa');
     expect(releaseAssetName('https://example.com/x.ipa')).toBeNull();
     expect(ipaName('0.1.3')).toBe('WhoopPlus-0.1.3.ipa');
+  });
+
+  it('CLI: --check und Exit-Code 3 bei veraltetem Build, ohne etwas zu schreiben', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'chk-'));
+    const ipa = join(dir, 'WhoopPlus-0.1.12.ipa');
+    writeFileSync(ipa, 'IPA');
+    writeFileSync(join(dir, 'meta.json'), JSON.stringify({ version: '0.1.12', build: '12', changelog: 'Neu' }));
+    const cli = (...extra) => execFileSync('node', [SCRIPT, 'source', '--meta', join(dir, 'meta.json'), '--ipa', ipa, ...extra], { encoding: 'utf8', stdio: 'pipe' });
+    expect(cli('--check', '--previous', join(dir, 'fehlt.json'))).toContain('Prüfung ok');
+    writeFileSync(join(dir, 'prev.json'), JSON.stringify(makeSource({ ...base, version: '0.1.20', build: '20' }).source));
+    let status = 0;
+    try {
+      cli('--check', '--previous', join(dir, 'prev.json'));
+    } catch (e) {
+      status = e.status;
+    }
+    expect(status).toBe(EXIT_STALE);
+    status = 0;
+    try {
+      cli('--previous', join(dir, 'prev.json'), '--out', join(dir, 'out.json'));
+    } catch (e) {
+      status = e.status;
+    }
+    expect(status).toBe(EXIT_STALE);
+    expect(() => readFileSync(join(dir, 'out.json'))).toThrow();
+  });
+
+  it('Repository kommt aus GITHUB_REPOSITORY', () => {
+    const out = execFileSync('node', ['--input-type=module', '-e', `import('${SCRIPT}').then((m) => console.log(m.RELEASE_DOWNLOAD, m.SOURCE_URL))`], {
+      encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: 'someone/fork' },
+    });
+    expect(out).toContain('https://github.com/someone/fork/releases/download/ios-latest/');
+    expect(out).toContain('https://raw.githubusercontent.com/someone/fork/sidestore/source.json');
   });
 
   it('CLI: liest Meta + IPA, schreibt source.json und die Liste der zu löschenden Assets', () => {

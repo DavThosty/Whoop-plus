@@ -33,7 +33,8 @@ class Flow {
   private listeners = new Set<Listener>();
   private started = false;
   private suppressCeremonyUntil = 0;
-  private checkingStory = false;
+  /** Laufende Story-Prüfung (andere Aufrufer warten darauf, statt parallel etwas zu öffnen). */
+  private storyCheck: Promise<void> | null = null;
   private checkingWhatsNew = false;
   /** „Was ist neu“ ist für diese Sitzung erledigt (gesehen, gemerkt oder nicht nötig). */
   private whatsNewDone = false;
@@ -110,25 +111,31 @@ class Flow {
    * Zeigt die Morgen-Story einmal am Tag, wenn für heute ein Schlaf erkannt wurde und es vor 14 Uhr ist.
    * `afterCeremony`: direkt nach der Zeremonie (dann wird nicht auf Ruhe im Hintergrund gewartet).
    */
-  async maybeAutoStory(afterCeremony = false): Promise<void> {
-    if (this.checkingStory) return;
+  maybeAutoStory(afterCeremony = false): Promise<void> {
+    if (this.storyCheck) return this.storyCheck;
     const s = app.state;
-    if (this.busy()) return;
-    if (!afterCeremony && (s.conn === 'connecting' || s.conn === 'syncing' || s.postSync || s.computing)) return;
-    this.checkingStory = true;
+    if (this.busy()) return Promise.resolve();
+    if (!afterCeremony && (s.conn === 'connecting' || s.conn === 'syncing' || s.postSync || s.computing)) return Promise.resolve();
+    const check = this.checkStory().finally(() => {
+      if (this.storyCheck === check) this.storyCheck = null;
+    });
+    this.storyCheck = check;
+    return check;
+  }
+
+  private async checkStory(): Promise<void> {
     try {
       const date = today();
       const shown = await getKv<string>('storyShownDate');
       if (shown === date) return;
       const day = await getDay(date);
       if (!storyDue({ now: new Date(), today: date, storyShownDate: shown, sleepEndSec: day?.sleep?.end ?? null })) return;
+      // Prüfen und Öffnen ohne `await` dazwischen – sonst könnte sich ein anderes Vollbild/Sheet dazwischenschieben.
       if (this.busy()) return;
-      await setKv('storyShownDate', date);
       this.set({ story: { date }, exiting: false });
+      await setKv('storyShownDate', date);
     } catch {
-      // Speicher nicht verfügbar – keine Story
-    } finally {
-      this.checkingStory = false;
+      // Speicher nicht verfügbar – keine Story (bzw. nicht gemerkt)
     }
   }
 
@@ -137,6 +144,8 @@ class Flow {
    * (Zeremonie, Story, Workout, Detail, Verbindungs- oder Workout-Hinweis haben Vorrang). Nicht bei der Erstinstallation.
    */
   async maybeWhatsNew(): Promise<void> {
+    // Die Morgen-Story hat Vorrang: eine laufende Story-Prüfung erst abwarten.
+    if (this.storyCheck) await this.storyCheck;
     if (this.whatsNewDone || this.checkingWhatsNew || this.state.whatsNew) return;
     if (!app.state.stats || this.busy() || !this.calm()) return;
     this.checkingWhatsNew = true;
