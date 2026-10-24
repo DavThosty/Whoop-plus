@@ -1,6 +1,6 @@
 # Baut die native iOS-App (unsigniert) und veröffentlicht sie als Release "ios-latest" und über die
 # SideStore-Quelle https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json.
-# Die IPA wird auf dem iPhone von SideStore mit der eigenen (kostenlosen) Apple-ID signiert – siehe docs/IOS.md.
+# Die IPA wird auf dem iPhone von SideStore mit der eigenen (kostenlosen) Apple-ID signiert – siehe docs/ANLEITUNG.md und docs/TECHNIK.md.
 #
 # Versionen: <major>.<minor> aus package.json + Lauf-Nummer, z. B. 0.1.12 (Build 12).
 # „Was ist neu“: aus der Commit-Nachricht des Merges (scripts/make-source.mjs changelog).
@@ -228,7 +228,7 @@ jobs:
             echo "Unsigniert – Installation und Updates über SideStore. Quelle (einmalig in SideStore hinzufügen):"
             echo "$SOURCE_URL"
             echo
-            echo "Anleitung: docs/IOS.md"
+            echo "Anleitung: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/ANLEITUNG.md"
           } > notes.md
           # Tag auf den gebauten Commit setzen (ein bestehendes Release folgt dem Tag).
           git -C "$GITHUB_WORKSPACE" tag -f "$RELEASE_TAG" "$GITHUB_SHA"

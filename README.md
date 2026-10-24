@@ -1,12 +1,14 @@
 # Whoop Plus
 
+**Anleitung: [docs/ANLEITUNG.md](docs/ANLEITUNG.md)**
+
 Eigene iPhone-App für das **Whoop 4.0** – ohne Abo, ohne Whoop-Cloud, ohne Server. Die App verbindet sich
 per Bluetooth direkt mit dem Band, lädt den Verlauf herunter und berechnet Schlaf, HRV, Ruhepuls, Recovery,
 Strain und Kalorien **lokal auf dem iPhone** mit nachvollziehbaren Formeln.
 
 Die App ist eine native iOS-App (Capacitor). Sie wird von GitHub Actions gebaut und kostenlos mit
 **SideStore** und einer normalen Apple-ID installiert – ohne Mac und ohne bezahlten Entwickler-Account.
-Schritt-für-Schritt-Anleitung: **[docs/IOS.md](docs/IOS.md)**.
+Schritt-für-Schritt-Anleitung: **[docs/ANLEITUNG.md](docs/ANLEITUNG.md)**, technische Details in [docs/TECHNIK.md](docs/TECHNIK.md).
 
 **Updates direkt in SideStore:** einmal die Quelle hinzufügen (*Sources → + →* Adresse einfügen), danach
 erscheint jede neue Version in SideStore mit „Update“-Knopf und „Was ist neu“:
@@ -40,7 +42,7 @@ https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json
 | `resources` | Quellen für App-Icon und Startbild, Icon der SideStore-Quelle |
 | `scripts/make-source.mjs` | Versionsnummer, „Was ist neu“ aus dem Merge-Commit, SideStore-Quelle (`source.json`) |
 | `.github/workflows/ios.yml` | Baut die IPA, veröffentlicht sie im Release `ios-latest` und in der SideStore-Quelle |
-| `docs` | [iOS-Installation](docs/IOS.md) und [Protokoll](docs/PROTOCOL.md) |
+| `docs` | [Anleitung](docs/ANLEITUNG.md), [Technik & Details](docs/TECHNIK.md) und [Protokoll](docs/PROTOCOL.md) |
 
 In der App spricht `WhoopDevice` weiter die Web-Bluetooth-API; `src/ble/capacitor-bluetooth.ts` bildet sie
 auf das Plugin `@capacitor-community/bluetooth-le` (CoreBluetooth) ab. Im Desktop-Browser wird echtes
@@ -59,7 +61,7 @@ npm run ios:sync     # build + npx cap sync ios (Web-Dateien und Plugins ins Xco
 Jeder Merge auf `main` (oder ein manueller Start unter *Actions → iOS-Build*) baut die App auf einem
 macOS-Runner als neue Version `<major>.<minor>.<Lauf-Nummer>` (z. B. 0.1.12), legt die IPA in das Release
 **ios-latest** und trägt sie mit dem „Was ist neu“-Text aus der Merge-Nachricht in die SideStore-Quelle ein
-(Branch `sidestore`). Lokal zeigt die App die Version „dev“. Details in [docs/IOS.md](docs/IOS.md).
+(Branch `sidestore`). Lokal zeigt die App die Version „dev“. Details in [docs/TECHNIK.md](docs/TECHNIK.md).
 
 ## Lizenz
 
