@@ -32,13 +32,17 @@ import { DEFAULT_RHR, STRAIN_MAX, STRAIN_TRIMP_REF } from './strain';
 import { SLEEP_WINDOW_END_HOUR, SLEEP_WINDOW_START_HOUR } from './time';
 
 export type ExplainTopic = 'recovery' | 'strain' | 'sleep' | 'hrv' | 'restingHr' | 'calories';
+/** Alias für die UI. */
+export type ExplainKey = ExplainTopic;
 
 export interface Explanation {
   title: string;
   /** Kurze Absätze in Klartext. */
   paragraphs: string[];
-  /** Formeln, eine pro Zeile (Klartext, Unicode). */
+  /** Formeln, eine pro Eintrag (Klartext, Unicode). */
   formulas: string[];
+  /** Alle Formeln als ein Text (Zeilen mit \n getrennt), z. B. für <pre>. */
+  formula: string;
   /** Grenzen und Hinweise. */
   limitations: string[];
 }
@@ -47,7 +51,7 @@ const de = (x: number, digits = 2) =>
   x.toLocaleString('de-DE', { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 const pct = (x: number) => `${de(x * 100, 0)} %`;
 
-export const EXPLANATIONS: Record<ExplainTopic, Explanation> = {
+const BASE: Record<ExplainTopic, Omit<Explanation, 'formula'>> = {
   recovery: {
     title: 'Recovery',
     paragraphs: [
@@ -150,6 +154,10 @@ export const EXPLANATIONS: Record<ExplainTopic, Explanation> = {
     ],
   },
 };
+
+export const EXPLANATIONS: Record<ExplainTopic, Explanation> = Object.fromEntries(
+  (Object.keys(BASE) as ExplainTopic[]).map((k) => [k, { ...BASE[k], formula: BASE[k].formulas.join('\n') }]),
+) as Record<ExplainTopic, Explanation>;
 
 export function explain(topic: ExplainTopic): Explanation {
   return EXPLANATIONS[topic];
