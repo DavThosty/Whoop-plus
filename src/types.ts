@@ -91,6 +91,10 @@ export interface SyncProgress {
   /** Zeitstempel des neuesten empfangenen Datensatzes. */
   newestTs: number | null;
   done: boolean;
+  /** Nur im abschließenden Ereignis (done = true): true, wenn der Sync regulär beendet wurde. */
+  ok?: boolean;
+  /** Nur bei ok = false: Fehlermeldung. */
+  error?: string;
 }
 
 export interface LiveHr {

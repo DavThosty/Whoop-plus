@@ -64,6 +64,10 @@ export interface WhoopTimings {
   clockToleranceSec: number;
   /** Nach dem Verbinden automatisch synchronisieren. */
   autoSync: boolean;
+  /** gatt.connect() – CoreBluetooth bricht selbst nie ab. */
+  connectTimeoutMs: number;
+  /** Jeder GATT-Write bzw. jede GATT-Operation (außer dem ersten Write, s. firstWriteTimeoutMs). */
+  writeTimeoutMs: number;
 }
 
 export const DEFAULT_TIMINGS: WhoopTimings = {
@@ -75,7 +79,12 @@ export const DEFAULT_TIMINGS: WhoopTimings = {
   syncIdleTimeoutMs: 20_000,
   clockToleranceSec: 5,
   autoSync: true,
+  connectTimeoutMs: 20_000,
+  writeTimeoutMs: 10_000,
 };
+
+/** Echtzeitpakete tragen die Banduhr; weicht sie stärker ab, wird die Telefonzeit verwendet. */
+const LIVE_CLOCK_TOLERANCE_SEC = 120;
 
 /** Datensätze vor 2020 stammen aus einer nicht gestellten Banduhr (1970) und sind nicht zuordenbar. */
 const MIN_VALID_TS = 1_577_836_800;
@@ -110,6 +119,22 @@ interface SyncSession {
   batches: number;
   idleTimer?: ReturnType<typeof setTimeout>;
   done: boolean;
+  /** Irgendein Verlaufs-/Metadatenpaket empfangen. */
+  traffic: boolean;
+  /** Erster nicht dekodierbarer Datensatz im aktuellen Block (→ kein Ack, Abbruch). */
+  badRecord: string | null;
+}
+
+interface AbortSignalLite {
+  promise: Promise<never>;
+  reject(e: Error): void;
+}
+
+function makeAbort(): AbortSignalLite {
+  let reject!: (e: Error) => void;
+  const promise = new Promise<never>((_, rej) => (reject = rej));
+  promise.catch(() => undefined);
+  return { promise, reject };
 }
 
 export class WhoopCommandError extends Error {
@@ -167,6 +192,10 @@ export class WhoopDevice {
   private heartbeatTimer?: ReturnType<typeof setInterval>;
   private resyncTimer?: ReturnType<typeof setInterval>;
 
+  /** Wird beim Abbau ausgelöst und bricht hängende GATT-Operationen des Aufbaus ab. */
+  private abort: AbortSignalLite | null = null;
+  private liveClockWarned = false;
+
   private realtimeOn = false;
   private lastCustomLiveAt = -Infinity;
   private session: SyncSession | null = null;
@@ -220,6 +249,7 @@ export class WhoopDevice {
     const bt = this.bt;
     if (!bt) throw new Error('Web Bluetooth wird von diesem Browser nicht unterstützt (Bluefy verwenden)');
     this.setState('connecting');
+    const gen = this.gen;
     let device: BluetoothDevice;
     try {
       device = await bt.requestDevice({
@@ -231,6 +261,7 @@ export class WhoopDevice {
       this.log(`Gerätewahl abgebrochen: ${toError(e).message}`);
       throw toError(e);
     }
+    if (gen !== this.gen) throw new Error('Verbindungsaufbau abgebrochen');
     await this.setup(device);
   }
 
@@ -263,6 +294,7 @@ export class WhoopDevice {
   async disconnect(): Promise<void> {
     const dev = this.device;
     if (!dev) {
+      this.gen++; // bricht ein laufendes requestDevice ab
       this.setState('disconnected');
       return;
     }
@@ -277,6 +309,7 @@ export class WhoopDevice {
 
   private async setup(device: BluetoothDevice): Promise<void> {
     const gen = ++this.gen;
+    this.abort = makeAbort();
     this.device = device;
     this.lastDeviceId = device.id;
     device.removeEventListener('gattserverdisconnected', this.onDisconnected);
@@ -285,11 +318,15 @@ export class WhoopDevice {
       if (!device.gatt) throw new Error('GATT-Server nicht verfügbar');
       const name = device.name ?? 'WHOOP';
       this.log(`Verbinde mit ${name} …`);
-      const server = await device.gatt.connect();
+      const server = await this.guard(
+        device.gatt.connect(),
+        this.t.connectTimeoutMs,
+        'Band nicht erreichbar (Zeitüberschreitung beim Verbinden). Ist es in der Nähe und nicht mit einer anderen App verbunden?',
+      );
       this.check(gen);
-      const svc = await server.getPrimaryService(SERVICE);
+      const svc = await this.guard(server.getPrimaryService(SERVICE), this.t.writeTimeoutMs, 'WHOOP-Dienst nicht gefunden (Zeitüberschreitung)');
       this.check(gen);
-      this.cmdChar = await svc.getCharacteristic(CMD_TO_STRAP);
+      this.cmdChar = await this.guard(svc.getCharacteristic(CMD_TO_STRAP), this.t.writeTimeoutMs, 'GATT-Zeitüberschreitung');
       this.check(gen);
 
       // 1) Benachrichtigungen 0003/0004/0005 abonnieren.
@@ -299,7 +336,7 @@ export class WhoopDevice {
         [DATA_FROM_STRAP, this.asmData],
       ];
       for (const [uuid, asm] of channels) {
-        const ch = await svc.getCharacteristic(uuid);
+        const ch = await this.guard(svc.getCharacteristic(uuid), this.t.writeTimeoutMs, 'GATT-Zeitüberschreitung');
         this.check(gen);
         asm.reset();
         const handler = () => {
@@ -308,7 +345,7 @@ export class WhoopDevice {
         };
         ch.addEventListener('characteristicvaluechanged', handler);
         this.unsubs.push(() => ch.removeEventListener('characteristicvaluechanged', handler));
-        await ch.startNotifications();
+        await this.guard(ch.startNotifications(), this.t.writeTimeoutMs, 'Benachrichtigungen konnten nicht aktiviert werden (Zeitüberschreitung)');
         this.check(gen);
       }
 
@@ -360,6 +397,34 @@ export class WhoopDevice {
     if (gen !== this.gen) throw new Error('Verbindung getrennt');
   }
 
+  /** Wartet auf `p`, höchstens `ms`, und bricht ab, sobald die Verbindung abgebaut wird. */
+  private guard<T>(p: Promise<T>, ms: number, timeoutMsg: string, signal = this.abort): Promise<T> {
+    p.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const racers: Promise<T>[] = [
+      p,
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error(timeoutMsg)), ms);
+      }),
+    ];
+    if (signal) racers.push(signal.promise);
+    return Promise.race(racers).finally(() => clearTimeout(timer));
+  }
+
+  /** Hängende GATT-Operation im Betrieb: Verbindung hart abbauen. */
+  private failLink(err: Error, gen: number): void {
+    if (gen !== this.gen || !this.device) return;
+    const dev = this.device;
+    this.emit('error', err);
+    this.log(`${err.message} – Verbindung wird getrennt`);
+    this.teardown(err);
+    try {
+      dev.gatt?.disconnect();
+    } catch {
+      /* egal */
+    }
+  }
+
   private onDisconnected = (): void => {
     if (!this.device) return;
     this.log('Verbindung zum Band verloren');
@@ -368,6 +433,9 @@ export class WhoopDevice {
 
   private teardown(reason: Error): void {
     this.gen++;
+    this.abort?.reject(reason);
+    this.abort = null;
+    this.liveClockWarned = false;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.resyncTimer) clearInterval(this.resyncTimer);
     this.heartbeatTimer = this.resyncTimer = undefined;
@@ -480,9 +548,9 @@ export class WhoopDevice {
 
   private async subscribeStandardHr(server: BluetoothRemoteGATTServer, gen: number): Promise<void> {
     try {
-      const svc = await server.getPrimaryService(HEART_RATE_SERVICE);
+      const svc = await this.guard(server.getPrimaryService(HEART_RATE_SERVICE), this.t.writeTimeoutMs, 'GATT-Zeitüberschreitung');
       this.check(gen);
-      const ch = await svc.getCharacteristic(HEART_RATE_MEASUREMENT);
+      const ch = await this.guard(svc.getCharacteristic(HEART_RATE_MEASUREMENT), this.t.writeTimeoutMs, 'GATT-Zeitüberschreitung');
       this.check(gen);
       const handler = () => {
         const v = ch.value;
@@ -490,7 +558,7 @@ export class WhoopDevice {
       };
       ch.addEventListener('characteristicvaluechanged', handler);
       this.unsubs.push(() => ch.removeEventListener('characteristicvaluechanged', handler));
-      await ch.startNotifications();
+      await this.guard(ch.startNotifications(), this.t.writeTimeoutMs, 'GATT-Zeitüberschreitung');
       this.log('Standard-Herzfrequenzdienst abonniert');
     } catch (e) {
       if (gen !== this.gen) throw e;
@@ -572,6 +640,8 @@ export class WhoopDevice {
       commits: 0,
       batches: 0,
       done: false,
+      traffic: false,
+      badRecord: null,
     };
     this.session = s;
     this.setState('syncing');
@@ -601,12 +671,26 @@ export class WhoopDevice {
   }
 
   /** Alle GATT-Writes laufen seriell – Web Bluetooth lehnt parallele Operationen ab. */
-  private write(frame: Uint8Array): Promise<void> {
+  private write(frame: Uint8Array, timeoutMs = this.t.writeTimeoutMs): Promise<void> {
     const ch = this.cmdChar;
     if (!ch) return Promise.reject(new Error('Nicht verbunden'));
-    const p = this.writeChain.then(() =>
-      typeof ch.writeValueWithResponse === 'function' ? ch.writeValueWithResponse(frame) : ch.writeValue(frame),
-    );
+    const gen = this.gen;
+    const signal = this.abort;
+    const p = this.writeChain.then(async () => {
+      if (gen !== this.gen) throw new Error('Verbindung getrennt');
+      try {
+        await this.guard(
+          typeof ch.writeValueWithResponse === 'function' ? ch.writeValueWithResponse(frame) : ch.writeValue(frame),
+          timeoutMs,
+          'Schreibzugriff auf das Band hängt (Zeitüberschreitung)',
+          signal,
+        );
+      } catch (e) {
+        const err = toError(e);
+        if (err.message.startsWith('Schreibzugriff auf das Band hängt')) this.failLink(err, gen);
+        throw err;
+      }
+    });
     this.writeChain = p.catch(() => undefined);
     return p;
   }
@@ -624,8 +708,9 @@ export class WhoopDevice {
     if (!this.cmdChar) throw new Error('Nicht verbunden');
     const seq = this.nextSeq();
     const frame = build(seq); // wirft bei NEVER_SEND
+    const writeTimeout = Math.max(this.t.writeTimeoutMs, timeoutMs);
     if (mode === 'none') {
-      await this.write(frame);
+      await this.write(frame, writeTimeout);
       return null;
     }
     const key = (opcode << 8) | seq;
@@ -640,7 +725,7 @@ export class WhoopDevice {
     });
     resp.catch(() => undefined);
     try {
-      await this.write(frame);
+      await this.write(frame, writeTimeout);
     } catch (e) {
       const p = this.pending.get(key);
       if (p) {
@@ -696,6 +781,14 @@ export class WhoopDevice {
         const live = parseRealtimeHr(inner);
         if (live) {
           this.lastCustomLiveAt = this.now();
+          const phone = Math.floor(this.now() / 1000);
+          if (Math.abs(live.ts - phone) > LIVE_CLOCK_TOLERANCE_SEC) {
+            if (!this.liveClockWarned) {
+              this.liveClockWarned = true;
+              this.log('Banduhr in Echtzeitpaketen falsch – verwende die Uhrzeit des Telefons');
+            }
+            live.ts = phone;
+          }
           this.emit('live', live);
         }
         break;
@@ -753,9 +846,11 @@ export class WhoopDevice {
       return;
     }
     this.armIdle(s);
+    s.traffic = true;
     const r = parseHistoryRecord(inner);
     if (!r) {
-      s.skipped++;
+      if (inner[1] === 25) s.skipped++; // reiner PPG-Burst ohne HR – bekannt, darf übersprungen werden
+      else s.badRecord ??= `Layout ${inner[1]}, ${inner.length} Byte`;
       return;
     }
     if (r.ts < MIN_VALID_TS) {
@@ -772,6 +867,16 @@ export class WhoopDevice {
     const s = this.session;
     if (!s) return;
     this.armIdle(s);
+    s.traffic = true;
+    if (s.badRecord && (m.subtype === MetadataType.HISTORY_END || m.subtype === MetadataType.HISTORY_COMPLETE)) {
+      // Nicht dekodierbare Datensätze: NICHT bestätigen, sonst löscht das Band sie.
+      const err = new Error(`Unbekanntes Datenformat (${s.badRecord}) – Sync abgebrochen, Daten bleiben auf dem Band`);
+      s.batch = [];
+      s.chain = s.chain.then(() => {
+        if (!s.done) this.abortSession(s, err);
+      });
+      return;
+    }
     switch (m.subtype) {
       case MetadataType.HISTORY_START:
         this.log('Band beginnt mit der Verlaufsübertragung');
@@ -842,8 +947,15 @@ export class WhoopDevice {
     if (s.done || s.commits > 0) return;
     s.idleTimer = setTimeout(() => {
       if (s.done) return;
-      this.log(`Keine Verlaufsdaten seit ${Math.round(this.t.syncIdleTimeoutMs / 1000)} s – Synchronisierung beendet`);
-      this.finishSession(s, null);
+      const secs = Math.round(this.t.syncIdleTimeoutMs / 1000);
+      if (!s.traffic) {
+        this.finishSession(s, new Error(`Keine Verlaufsdaten vom Band erhalten (keine Antwort seit ${secs} s)`));
+      } else if (s.batch.length) {
+        this.finishSession(s, new Error(`Verlaufsübertragung unterbrochen (seit ${secs} s keine Daten)`));
+      } else {
+        this.log(`Keine Verlaufsdaten seit ${secs} s – Synchronisierung beendet`);
+        this.finishSession(s, null);
+      }
     }, this.t.syncIdleTimeoutMs);
   }
 
@@ -860,7 +972,7 @@ export class WhoopDevice {
     if (s.invalidTs) this.log(`${s.invalidTs} Datensätze ohne gültige Uhrzeit verworfen`);
     if (s.skipped) this.log(`${s.skipped} Datensätze ohne Pulsdaten (z. B. Layout 25) übersprungen`);
     if (this._state === 'syncing') this.setState('connected');
-    this.emitProgress(s, true);
+    this.emitProgress(s, true, err);
     if (err) {
       s.reject(err);
     } else {
@@ -869,9 +981,14 @@ export class WhoopDevice {
     }
   }
 
-  private emitProgress(s: SyncSession, done: boolean): void {
+  private emitProgress(s: SyncSession, done: boolean, err: Error | null = null): void {
     s.lastEmitAt = s.received;
-    this.emit('sync', { records: s.received, newestTs: s.newestTs, done });
+    const p: SyncProgress = { records: s.received, newestTs: s.newestTs, done };
+    if (done) {
+      p.ok = !err;
+      if (err) p.error = err.message;
+    }
+    this.emit('sync', p);
   }
 
   private autoSync(): void {
