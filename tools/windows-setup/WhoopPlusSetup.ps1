@@ -29,6 +29,10 @@ $script:HelperVersion = '1.0.0'
 $script:Config = @{
     ILoaderApiUrl        = 'https://api.github.com/repos/nab138/iloader/releases/latest'
     ILoaderLatestJsonUrl = 'https://github.com/nab138/iloader/releases/latest/download/latest.json'
+    ILoaderReleasesUrl   = 'https://github.com/nab138/iloader/releases/latest'
+    # Öffentlicher minisign-Schlüssel des iloader-Updaters (src-tauri/tauri.conf.json, Schlüssel-ID E0D7460DFA37E536).
+    # Damit werden Downloads geprüft, für die GitHub keine Größe/Prüfsumme liefert.
+    ILoaderPublicKey     = 'RWQ25Tf6DUbX4P4ykh8drDPmspg7m3XZsneMj+0Vhe6oFS1sN4OblRhr'
     LocalDevVpnUrl       = 'https://apps.apple.com/app/localdevvpn/id6755608044'
     SourceUrl            = 'https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/source.json'
     IpaFallbackUrl       = 'https://github.com/DavThosty/Whoop-plus/releases/tag/ios-latest'
@@ -98,19 +102,47 @@ function Select-ILoaderAsset {
     return $null
 }
 
+function Test-ILoaderDownloadUrl {
+    # Nur Dateien aus den Releases von nab138/iloader werden geladen (Groß-/Kleinschreibung genau).
+    param([string]$Url, [switch]$Signature)
+    $pattern = '^https://github\.com/nab138/iloader/releases/download/[^/]+/[A-Za-z0-9._-]+\.(msi|exe)$'
+    if ($Signature) { $pattern = '^https://github\.com/nab138/iloader/releases/download/[^/]+/[A-Za-z0-9._-]+\.(msi|exe)\.sig$' }
+    return ([string]$Url -cmatch $pattern)
+}
+
+function Get-SafeFileName {
+    # Dateiname aus einer Adresse – nur Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich; sonst $null.
+    param([string]$Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $null }
+    try { $path = ([System.Uri]$Url).AbsolutePath } catch { return $null }
+    # Bewusst nicht entschlüsseln: %-Zeichen fallen durch die Zeichen-Positivliste (gleich auf allen Systemen).
+    $name = [System.IO.Path]::GetFileName($path)
+    if ($name -cmatch '^[A-Za-z0-9_-][A-Za-z0-9._-]*$' -and $name -notmatch '\.\.') { return $name }
+    return $null
+}
+
 function New-ILoaderReleaseInfo {
-    param([string]$Version, [string]$Tag, [string]$FileName, [string]$Url, [long]$Size, [string]$Sha256, [string]$Source)
+    # $null, wenn die Adresse nicht auf der Positivliste steht oder der Dateiname unsicher ist.
+    param([string]$Version, [string]$Tag, [string]$Url, [long]$Size, [string]$Sha256, [string]$Source,
+        [string]$SignatureUrl, [string]$SignatureBase64)
+    if (-not (Test-ILoaderDownloadUrl $Url)) { return $null }
+    $fileName = Get-SafeFileName $Url
+    if (-not $fileName) { return $null }
+    if ($SignatureUrl -and -not (Test-ILoaderDownloadUrl $SignatureUrl -Signature)) { $SignatureUrl = $null }
+    if ($SignatureBase64 -and $SignatureBase64 -notmatch '^[A-Za-z0-9+/=\s]+$') { $SignatureBase64 = $null }
     $kind = 'exe'
-    if ($FileName -match '\.msi$') { $kind = 'msi' }
+    if ($fileName -match '\.msi$') { $kind = 'msi' }
     return [pscustomobject]@{
-        Version  = $Version
-        Tag      = $Tag
-        FileName = $FileName
-        Url      = $Url
-        Size     = $Size
-        Sha256   = $Sha256
-        Kind     = $kind
-        Source   = $Source
+        Version         = $Version
+        Tag             = $Tag
+        FileName        = $fileName
+        Url             = $Url
+        Size            = $Size
+        Sha256          = $Sha256
+        Kind            = $kind
+        Source          = $Source
+        SignatureUrl    = $SignatureUrl
+        SignatureBase64 = $SignatureBase64
     }
 }
 
@@ -127,8 +159,12 @@ function ConvertFrom-ILoaderApiRelease {
     $size = 0L
     $rawSize = Get-PropValue $asset 'size'
     if ($null -ne $rawSize) { $size = [long]$rawSize }
-    return New-ILoaderReleaseInfo -Version $version.ToString(3) -Tag $tag -FileName ([string](Get-PropValue $asset 'name')) `
-        -Url ([string](Get-PropValue $asset 'browser_download_url')) -Size $size -Sha256 $sha -Source 'api'
+    $name = [string](Get-PropValue $asset 'name')
+    $sigAsset = @(Get-PropValue $Release 'assets') | Where-Object { [string](Get-PropValue $_ 'name') -ceq ($name + '.sig') } | Select-Object -First 1
+    $sigUrl = $null
+    if ($null -ne $sigAsset) { $sigUrl = [string](Get-PropValue $sigAsset 'browser_download_url') }
+    return New-ILoaderReleaseInfo -Version $version.ToString(3) -Tag $tag -Url ([string](Get-PropValue $asset 'browser_download_url')) `
+        -Size $size -Sha256 $sha -Source 'api' -SignatureUrl $sigUrl
 }
 
 function ConvertFrom-ILoaderLatestJson {
@@ -144,23 +180,34 @@ function ConvertFrom-ILoaderLatestJson {
         if ($url -match '\.(msi|exe)$') { $entry = $candidate; break }
     }
     if ($null -eq $entry) { return $null }
-    $url = [string](Get-PropValue $entry 'url')
-    $fileName = ($url -split '/')[-1]
-    return New-ILoaderReleaseInfo -Version $version.ToString(3) -Tag ('v' + $version.ToString(3)) -FileName $fileName `
-        -Url $url -Size 0 -Sha256 $null -Source 'latest.json'
+    # Keine Größe/Prüfsumme – dafür die minisign-Signatur des Tauri-Updaters (wird vor dem Installieren geprüft).
+    return New-ILoaderReleaseInfo -Version $version.ToString(3) -Tag ('v' + $version.ToString(3)) `
+        -Url ([string](Get-PropValue $entry 'url')) -Size 0 -Sha256 $null -Source 'latest.json' `
+        -SignatureBase64 ([string](Get-PropValue $entry 'signature'))
 }
 
-function Test-DownloadComplete {
-    # Prüft Größe und (falls bekannt) SHA-256 einer heruntergeladenen Datei.
-    param([long]$ActualSize, [long]$ExpectedSize, [string]$ActualSha256, [string]$ExpectedSha256)
-    if ($ActualSize -le 0) { return [pscustomobject]@{ Ok = $false; Reason = 'leer' } }
+function Get-DownloadVerdict {
+    # Darf die heruntergeladene Datei installiert werden?
+    #   Verified     = mindestens eine unabhängige Prüfung (Signatur, SHA-256 oder Größe laut GitHub) passt
+    #   Corrupt      = eine Prüfung schlägt fehl (erneut laden)
+    #   Unverifiable = nichts zum Prüfen da (nicht installieren, selbst laden lassen)
+    param([long]$ActualSize, [long]$ExpectedSize, [string]$ActualSha256, [string]$ExpectedSha256,
+        [ValidateSet('Valid', 'Invalid', 'Unavailable')][string]$Signature = 'Unavailable')
+    $verdict = { param($ok, $kind, $reason) [pscustomobject]@{ Ok = $ok; Kind = $kind; Reason = $reason } }
+    if ($ActualSize -le 0) { return (& $verdict $false 'Corrupt' 'Datei leer') }
+    if ($Signature -eq 'Invalid') { return (& $verdict $false 'Corrupt' 'Signatur ungültig') }
+    if ($ExpectedSha256 -and ([string]$ActualSha256).ToUpperInvariant() -ne $ExpectedSha256.ToUpperInvariant()) {
+        return (& $verdict $false 'Corrupt' 'SHA-256 passt nicht')
+    }
     if ($ExpectedSize -gt 0 -and $ActualSize -ne $ExpectedSize) {
-        return [pscustomobject]@{ Ok = $false; Reason = "Größe $ActualSize statt $ExpectedSize" }
+        return (& $verdict $false 'Corrupt' "Größe $ActualSize statt $ExpectedSize")
     }
-    if ($ExpectedSha256 -and $ActualSha256 -and ($ActualSha256.ToUpperInvariant() -ne $ExpectedSha256.ToUpperInvariant())) {
-        return [pscustomobject]@{ Ok = $false; Reason = 'Prüfsumme passt nicht' }
-    }
-    return [pscustomobject]@{ Ok = $true; Reason = '' }
+    $checks = @()
+    if ($Signature -eq 'Valid') { $checks += 'Signatur' }
+    if ($ExpectedSha256) { $checks += 'SHA-256' }
+    if ($ExpectedSize -gt 0) { $checks += 'Größe' }
+    if ($checks.Count -eq 0) { return (& $verdict $false 'Unverifiable' 'weder Signatur noch Prüfsumme noch Größe bekannt') }
+    return (& $verdict $true 'Verified' ($checks -join ', '))
 }
 
 function Get-WindowsSupport {
@@ -242,7 +289,7 @@ function Get-WingetResultKind {
         -1978335189 { return 'AlreadyInstalled' }   # 0x8A15002B: kein Update nötig
         -1978335135 { return 'AlreadyInstalled' }   # 0x8A150061: schon installiert
         -1978335212 { return 'NotFound' }           # 0x8A150014: Paket nicht gefunden
-        -1978335215 { return 'Cancelled' }          # 0x8A150011: abgebrochen
+        -1978335215 { return 'HashMismatch' }       # 0x8A150011: INSTALLER_HASH_MISMATCH (Download beschädigt)
         default { return 'Failed' }
     }
 }
@@ -800,13 +847,14 @@ function Get-InstalledILoader {
     return $found
 }
 
-$script:FetchJsonScript = {
-    # Lädt JSON als Text (auch wenn der Server es als Datei ausliefert) und wandelt es um.
+$script:FetchTextScript = {
+    # Lädt eine Adresse als Text (UTF-8). Fehler (Netz, DNS, HTTP) werden nach außen gemeldet.
     param($Url, $UserAgent)
+    $ErrorActionPreference = 'Stop'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $request = [System.Net.HttpWebRequest]::Create($Url)
     $request.UserAgent = $UserAgent
-    $request.Accept = 'application/vnd.github+json, application/json'
+    $request.Accept = 'application/vnd.github+json, application/json, text/plain, */*'
     $request.Timeout = 20000
     $request.ReadWriteTimeout = 20000
     $response = $request.GetResponse()
@@ -815,40 +863,51 @@ $script:FetchJsonScript = {
         try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
     }
     finally { $response.Close() }
-    $text | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace($text)) { throw "Leere Antwort von $Url" }
+    $text
 }
 
 $script:DownloadScript = {
+    # Lädt $Url nach $Path. Eine alte Teildatei wird vorher gelöscht, bei jedem Fehler/Abbruch auch.
     param($Url, $Path, $Progress, $UserAgent)
+    $ErrorActionPreference = 'Stop'
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $request = [System.Net.HttpWebRequest]::Create($Url)
-    $request.UserAgent = $UserAgent
-    $request.Timeout = 30000
-    $request.ReadWriteTimeout = 60000
-    $response = $request.GetResponse()
+    if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Delete($Path) }
     $done = 0L
     try {
-        $Progress.Total = [long]$response.ContentLength
-        $inStream = $response.GetResponseStream()
-        $outStream = [System.IO.File]::Create($Path)
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.UserAgent = $UserAgent
+        $request.Timeout = 30000
+        $request.ReadWriteTimeout = 60000
+        $response = $request.GetResponse()
         try {
-            $buffer = New-Object byte[] 65536
-            while (($read = $inStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                $outStream.Write($buffer, 0, $read)
-                $done += $read
-                $Progress.Done = $done
-                if ($Progress.Cancel) { throw 'Download abgebrochen' }
+            $Progress.Total = [long]$response.ContentLength
+            $inStream = $response.GetResponseStream()
+            $outStream = [System.IO.File]::Create($Path)
+            try {
+                $buffer = New-Object byte[] 65536
+                while (($read = $inStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $outStream.Write($buffer, 0, $read)
+                    $done += $read
+                    $Progress.Done = $done
+                    if ($Progress.Cancel) { throw 'Download abgebrochen' }
+                }
             }
+            finally { $outStream.Dispose(); $inStream.Dispose() }
         }
-        finally { $outStream.Dispose(); $inStream.Dispose() }
+        finally { $response.Close() }
     }
-    finally { $response.Close() }
+    catch {
+        try { if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Delete($Path) } } catch { $null = $_ }
+        throw
+    }
     return $done
 }
 
 $script:RunProcessScript = {
     # Startet ein Programm unsichtbar und liest seine Ausgabe mit (für die Fortschrittsanzeige).
     param($Exe, [string[]]$ArgList, $Progress)
+    $ErrorActionPreference = 'Stop'
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Exe
     $psi.Arguments = (@($ArgList | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
@@ -872,17 +931,17 @@ $script:RunProcessScript = {
 }
 
 function Get-ILoaderLatestRelease {
-    # Neueste iloader-Version: GitHub-API, ersatzweise latest.json.
+    # Neueste iloader-Version: GitHub-API, ersatzweise latest.json. Nur Adressen der Positivliste.
     try {
-        $api = Invoke-InBackground -ScriptBlock $script:FetchJsonScript -ArgumentList @($script:Config.ILoaderApiUrl, $script:Config.UserAgent)
-        $info = ConvertFrom-ILoaderApiRelease $api
+        $text = Invoke-InBackground -ScriptBlock $script:FetchTextScript -ArgumentList @($script:Config.ILoaderApiUrl, $script:Config.UserAgent)
+        $info = ConvertFrom-ILoaderApiRelease ($text | ConvertFrom-Json)
         if ($null -ne $info) { return $info }
-        Write-SetupLog 'GitHub-API: keine passende Windows-Datei gefunden' 'WARN'
+        Write-SetupLog 'GitHub-API: keine passende (oder keine zulässige) Windows-Datei gefunden' 'WARN'
     }
     catch { Write-SetupLog "GitHub-API nicht erreichbar: $($_.Exception.Message)" 'WARN' }
     try {
-        $json = Invoke-InBackground -ScriptBlock $script:FetchJsonScript -ArgumentList @($script:Config.ILoaderLatestJsonUrl, $script:Config.UserAgent)
-        return (ConvertFrom-ILoaderLatestJson $json)
+        $text = Invoke-InBackground -ScriptBlock $script:FetchTextScript -ArgumentList @($script:Config.ILoaderLatestJsonUrl, $script:Config.UserAgent)
+        return (ConvertFrom-ILoaderLatestJson ($text | ConvertFrom-Json))
     }
     catch {
         Write-SetupLog "latest.json nicht erreichbar: $($_.Exception.Message)" 'WARN'
@@ -939,15 +998,33 @@ function Test-IPhoneConnected {
     return [pscustomobject]@{ Connected = $false; Via = ''; Count = 0 }
 }
 
-function Test-IsUserCancelled {
-    # UAC-Abfrage mit „Nein“ beantwortet (Win32-Fehler 1223)?
+function Get-Win32ErrorCode {
+    # Sucht in einer Ausnahme (auch verschachtelt, z. B. MethodInvocationException) den Win32-Fehlercode.
     param($Exception)
     $e = $Exception
     while ($null -ne $e) {
-        if ($e -is [System.ComponentModel.Win32Exception] -and $e.NativeErrorCode -eq 1223) { return $true }
+        if ($e -is [System.ComponentModel.Win32Exception]) { return $e.NativeErrorCode }
         $e = $e.InnerException
     }
-    return $false
+    return $null
+}
+
+function Test-IsUserCancelled {
+    # Windows-Abfrage „Möchten Sie zulassen …“ mit „Nein“ beantwortet = Win32-Fehler 1223 (ERROR_CANCELLED).
+    param($Exception)
+    return ((Get-Win32ErrorCode $Exception) -eq 1223)
+}
+
+function Start-InstallerProcess {
+    # Startet ein Installationsprogramm. Mit -Elevated über die Windows-Abfrage (Verb „runas“);
+    # lehnt man sie ab, wirft Process.Start eine Win32Exception 1223 (siehe Test-IsUserCancelled).
+    param([string]$FileName, [string]$Arguments, [switch]$Elevated)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FileName
+    $psi.Arguments = $Arguments
+    $psi.UseShellExecute = $true
+    if ($Elevated) { $psi.Verb = 'runas' }
+    return [System.Diagnostics.Process]::Start($psi)
 }
 
 function Stop-ILoaderIfRunning {
@@ -982,16 +1059,57 @@ function Wait-UiCondition {
     return $true
 }
 
+# Funktionen, die die Hintergrund-Prüfungen brauchen (werden in einen eigenen Runspace kopiert).
+$script:CheckFunctions = @(
+    'Get-PropValue', 'ConvertTo-VersionObject', 'Test-IsAppleMobileDeviceId', 'New-UsbmuxListDevicesPlist', 'New-UsbmuxPlistPacket',
+    'ConvertFrom-UsbmuxHeader', 'ConvertFrom-PlistNode', 'ConvertFrom-PlistXml', 'Get-UsbmuxDeviceList', 'Read-StreamExact',
+    'Get-UsbmuxDevices', 'Test-IPhoneConnected', 'Get-UninstallEntries', 'Test-AppleSoftware', 'Find-ILoaderInstall',
+    'Get-ILoaderCandidatePaths', 'Get-InstalledILoader'
+)
+$script:CheckRunspace = $null
+$script:CheckRunspaceBusy = $false
+
+function New-CheckRunspace {
+    # Runspace mit Kopien der Prüf-Funktionen und der Einstellungen ($Config).
+    $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    foreach ($name in $script:CheckFunctions) {
+        $definition = (Get-Command -Name $name -CommandType Function).Definition
+        $iss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry -ArgumentList $name, $definition))
+    }
+    $iss.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList 'Config', $script:Config, 'Einstellungen'))
+    $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($iss)
+    $runspace.Open()
+    return $runspace
+}
+
 function Invoke-InBackground {
     # Führt einen Skriptblock in einem eigenen Runspace aus (Fenster bleibt bedienbar). Ohne Fenster: direkt.
-    param([scriptblock]$ScriptBlock, [object[]]$ArgumentList = @(), [scriptblock]$OnTick, [int]$TimeoutSeconds = 0)
-    if (-not $script:UiActive) { return (& $ScriptBlock @ArgumentList) }
+    #   -Shared: im wiederverwendeten Prüf-Runspace (mit $script:CheckFunctions), z. B. für die iPhone-Suche.
+    param([scriptblock]$ScriptBlock, [object[]]$ArgumentList = @(), [scriptblock]$OnTick, [int]$TimeoutSeconds = 0,
+        [switch]$Shared, [switch]$ForceRunspace)
+    if (-not $script:UiActive -and -not $ForceRunspace) { return (& $ScriptBlock @ArgumentList) }
     $__ps = [powershell]::Create()
+    $__ownRunspace = $null
+    $__usesShared = $false
     try {
+        if ($Shared) {
+            if (-not $script:CheckRunspaceBusy) {
+                if ($null -eq $script:CheckRunspace -or $script:CheckRunspace.RunspaceStateInfo.State -ne 'Opened') {
+                    $script:CheckRunspace = New-CheckRunspace
+                }
+                $__ps.Runspace = $script:CheckRunspace
+                $script:CheckRunspaceBusy = $true
+                $__usesShared = $true
+            }
+            else {
+                $__ownRunspace = New-CheckRunspace
+                $__ps.Runspace = $__ownRunspace
+            }
+        }
         $null = $__ps.AddScript($ScriptBlock.ToString())
         foreach ($arg in $ArgumentList) { $null = $__ps.AddArgument($arg) }
         $__async = $__ps.BeginInvoke()
-        $finished = Wait-UiCondition -Until { $__async.IsCompleted } -OnTick $OnTick -TimeoutMs ($TimeoutSeconds * 1000)
+        $finished = Wait-UiCondition -Until { $__async.IsCompleted } -OnTick $OnTick -TimeoutMs ($TimeoutSeconds * 1000) -IntervalMs 50
         if (-not $finished) {
             $null = $__ps.BeginStop($null, $null)
             throw 'Abgebrochen oder Zeit überschritten'
@@ -1000,7 +1118,314 @@ function Invoke-InBackground {
         if ($output.Count -eq 0 -and $__ps.Streams.Error.Count -gt 0) { throw $__ps.Streams.Error[0].Exception }
         return $output
     }
-    finally { $__ps.Dispose() }
+    finally {
+        $__ps.Dispose()
+        if ($__usesShared) { $script:CheckRunspaceBusy = $false }
+        if ($null -ne $__ownRunspace) { $__ownRunspace.Dispose() }
+    }
+}
+
+function Invoke-Check {
+    # Eine der Prüf-Funktionen im Hintergrund ausführen (z. B. 'Test-IPhoneConnected').
+    param([ValidateSet('Test-IPhoneConnected', 'Test-AppleSoftware', 'Get-InstalledILoader')][string]$Name)
+    return (Invoke-InBackground -ScriptBlock ([scriptblock]::Create($Name)) -Shared)
+}
+
+function Close-CheckRunspace {
+    if ($null -ne $script:CheckRunspace) {
+        try { $script:CheckRunspace.Dispose() } catch { $null = $_ }
+        $script:CheckRunspace = $null
+    }
+}
+
+# endregion
+
+# region Signaturprüfung (minisign, wie der iloader-Updater)
+
+$script:MinisignSource = @'
+using System;
+using System.IO;
+using System.Numerics;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace WhoopPlusSetup
+{
+    // BLAKE2b-512 (RFC 7693), nur ohne Schlüssel – für minisign-Signaturen ("ED" = vorab gehasht).
+    public static class Blake2b
+    {
+        static readonly ulong[] IV = {
+            0x6a09e667f3bcc908UL, 0xbb67ae8584caa73bUL, 0x3c6ef372fe94f82bUL, 0xa54ff53a5f1d36f1UL,
+            0x510e527fade682d1UL, 0x9b05688c2b3e6c1fUL, 0x1f83d9abfb41bd6bUL, 0x5be0cd19137e2179UL };
+        static readonly int[][] Sigma = {
+            new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+            new[] { 14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3 },
+            new[] { 11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4 },
+            new[] { 7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8 },
+            new[] { 9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13 },
+            new[] { 2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9 },
+            new[] { 12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11 },
+            new[] { 13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10 },
+            new[] { 6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5 },
+            new[] { 10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0 } };
+
+        static ulong Ror(ulong x, int n) { return (x >> n) | (x << (64 - n)); }
+
+        static void G(ulong[] v, int a, int b, int c, int d, ulong x, ulong y)
+        {
+            unchecked
+            {
+                v[a] = v[a] + v[b] + x; v[d] = Ror(v[d] ^ v[a], 32);
+                v[c] = v[c] + v[d]; v[b] = Ror(v[b] ^ v[c], 24);
+                v[a] = v[a] + v[b] + y; v[d] = Ror(v[d] ^ v[a], 16);
+                v[c] = v[c] + v[d]; v[b] = Ror(v[b] ^ v[c], 63);
+            }
+        }
+
+        static void Compress(ulong[] h, byte[] block, ulong t0, ulong t1, bool last)
+        {
+            ulong[] m = new ulong[16];
+            for (int i = 0; i < 16; i++) m[i] = ReadLE64(block, i * 8);
+            ulong[] v = new ulong[16];
+            for (int i = 0; i < 8; i++) { v[i] = h[i]; v[i + 8] = IV[i]; }
+            v[12] ^= t0; v[13] ^= t1;
+            if (last) v[14] = ~v[14];
+            for (int r = 0; r < 12; r++)
+            {
+                int[] s = Sigma[r % 10];
+                G(v, 0, 4, 8, 12, m[s[0]], m[s[1]]);
+                G(v, 1, 5, 9, 13, m[s[2]], m[s[3]]);
+                G(v, 2, 6, 10, 14, m[s[4]], m[s[5]]);
+                G(v, 3, 7, 11, 15, m[s[6]], m[s[7]]);
+                G(v, 0, 5, 10, 15, m[s[8]], m[s[9]]);
+                G(v, 1, 6, 11, 12, m[s[10]], m[s[11]]);
+                G(v, 2, 7, 8, 13, m[s[12]], m[s[13]]);
+                G(v, 3, 4, 9, 14, m[s[14]], m[s[15]]);
+            }
+            for (int i = 0; i < 8; i++) h[i] ^= v[i] ^ v[i + 8];
+        }
+
+        static ulong ReadLE64(byte[] b, int o)
+        {
+            ulong r = 0;
+            for (int i = 7; i >= 0; i--) r = (r << 8) | b[o + i];
+            return r;
+        }
+
+        public static byte[] Hash512(Stream input)
+        {
+            ulong[] h = (ulong[])IV.Clone();
+            h[0] ^= 0x01010040UL;   // Tiefe 1, Fanout 1, ohne Schlüssel, 64 Byte Ausgabe
+            byte[] block = new byte[128];
+            int fill = 0;
+            ulong t0 = 0, t1 = 0;
+            byte[] chunk = new byte[65536];
+            int read;
+            while ((read = input.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                int pos = 0;
+                while (pos < read)
+                {
+                    if (fill == 128)
+                    {
+                        unchecked { t0 += 128; if (t0 < 128) t1++; }
+                        Compress(h, block, t0, t1, false);
+                        fill = 0;
+                    }
+                    int n = Math.Min(128 - fill, read - pos);
+                    Buffer.BlockCopy(chunk, pos, block, fill, n);
+                    fill += n; pos += n;
+                }
+            }
+            unchecked { t0 += (ulong)fill; if (t0 < (ulong)fill) t1++; }
+            for (int i = fill; i < 128; i++) block[i] = 0;
+            Compress(h, block, t0, t1, true);
+            byte[] output = new byte[64];
+            for (int i = 0; i < 8; i++)
+                for (int j = 0; j < 8; j++) output[i * 8 + j] = (byte)(h[i] >> (8 * j));
+            return output;
+        }
+
+        public static byte[] Hash512(byte[] data) { using (var ms = new MemoryStream(data)) return Hash512(ms); }
+    }
+
+    // Ed25519-Prüfung (RFC 8032) mit BigInteger – langsam, aber nur einmal pro Download nötig.
+    public static class Ed25519
+    {
+        static readonly BigInteger P = BigInteger.Pow(2, 255) - 19;
+        static readonly BigInteger L = BigInteger.Pow(2, 252) + BigInteger.Parse("27742317777372353535851937790883648493");
+        static readonly BigInteger D = Mod(-121665 * Inv(121666));
+        static readonly BigInteger SqrtM1 = BigInteger.ModPow(2, (P - 1) / 4, P);
+        static readonly BigInteger[] Base = MakeBase();
+
+        static BigInteger Mod(BigInteger a) { BigInteger r = a % P; return r.Sign < 0 ? r + P : r; }
+        static BigInteger Inv(BigInteger x) { return BigInteger.ModPow(Mod(x), P - 2, P); }
+
+        static BigInteger FromLE(byte[] b, int offset, int count)
+        {
+            byte[] tmp = new byte[count + 1];
+            Buffer.BlockCopy(b, offset, tmp, 0, count);
+            return new BigInteger(tmp);
+        }
+
+        static BigInteger[] MakeBase()
+        {
+            BigInteger y = Mod(4 * Inv(5));
+            BigInteger x = RecoverX(y, 0).Value;
+            return new[] { x, y, BigInteger.One, Mod(x * y) };
+        }
+
+        static BigInteger? RecoverX(BigInteger y, int sign)
+        {
+            if (y >= P) return null;
+            BigInteger x2 = Mod((y * y - 1) * Inv(D * y * y + 1));
+            if (x2.IsZero) { if (sign != 0) return null; return BigInteger.Zero; }
+            BigInteger x = BigInteger.ModPow(x2, (P + 3) / 8, P);
+            if (!Mod(x * x - x2).IsZero) x = Mod(x * SqrtM1);
+            if (!Mod(x * x - x2).IsZero) return null;
+            if ((int)(x & 1) != sign) x = P - x;
+            return x;
+        }
+
+        static BigInteger[] Decompress(byte[] b, int offset)
+        {
+            byte[] tmp = new byte[32];
+            Buffer.BlockCopy(b, offset, tmp, 0, 32);
+            int sign = tmp[31] >> 7;
+            tmp[31] &= 0x7F;
+            BigInteger y = FromLE(tmp, 0, 32);
+            BigInteger? x = RecoverX(y, sign);
+            if (x == null) return null;
+            return new[] { x.Value, y, BigInteger.One, Mod(x.Value * y) };
+        }
+
+        static BigInteger[] Add(BigInteger[] p, BigInteger[] q)
+        {
+            BigInteger a = Mod((p[1] - p[0]) * (q[1] - q[0]));
+            BigInteger b = Mod((p[1] + p[0]) * (q[1] + q[0]));
+            BigInteger c = Mod(2 * p[3] * q[3] * D);
+            BigInteger d = Mod(2 * p[2] * q[2]);
+            BigInteger e = b - a, f = d - c, g = d + c, h = b + a;
+            return new[] { Mod(e * f), Mod(g * h), Mod(f * g), Mod(e * h) };
+        }
+
+        static BigInteger[] Mul(BigInteger s, BigInteger[] p)
+        {
+            BigInteger[] q = { BigInteger.Zero, BigInteger.One, BigInteger.One, BigInteger.Zero };
+            while (s > 0)
+            {
+                if (!(s & 1).IsZero) q = Add(q, p);
+                p = Add(p, p);
+                s >>= 1;
+            }
+            return q;
+        }
+
+        static bool Equal(BigInteger[] p, BigInteger[] q)
+        {
+            return Mod(p[0] * q[2] - q[0] * p[2]).IsZero && Mod(p[1] * q[2] - q[1] * p[2]).IsZero;
+        }
+
+        public static bool Verify(byte[] publicKey, byte[] message, byte[] signature)
+        {
+            if (publicKey == null || publicKey.Length != 32 || signature == null || signature.Length != 64) return false;
+            BigInteger[] a = Decompress(publicKey, 0);
+            if (a == null) return false;
+            BigInteger[] r = Decompress(signature, 0);
+            if (r == null) return false;
+            BigInteger s = FromLE(signature, 32, 32);
+            if (s >= L) return false;
+            byte[] hashInput = new byte[64 + message.Length];
+            Buffer.BlockCopy(signature, 0, hashInput, 0, 32);
+            Buffer.BlockCopy(publicKey, 0, hashInput, 32, 32);
+            Buffer.BlockCopy(message, 0, hashInput, 64, message.Length);
+            byte[] hash;
+            using (SHA512 sha = SHA512.Create()) hash = sha.ComputeHash(hashInput);
+            BigInteger k = FromLE(hash, 0, 64) % L;
+            return Equal(Mul(s, Base), Add(r, Mul(k, a)));
+        }
+    }
+
+    // minisign-Signaturen, wie sie der Tauri-Updater von iloader verwendet.
+    public static class Minisign
+    {
+        static byte[] Slice(byte[] b, int offset, int count) { byte[] r = new byte[count]; Buffer.BlockCopy(b, offset, r, 0, count); return r; }
+
+        // publicKey: zweite Zeile der .pub-Datei (Base64, beginnt mit "RW").
+        // signatureText: Inhalt der .sig-Datei (4 Zeilen). Ergebnis: "" = gültig, sonst Grund.
+        public static string Verify(string publicKey, string signatureText, Stream data)
+        {
+            byte[] pk;
+            try { pk = Convert.FromBase64String(publicKey.Trim()); } catch (FormatException) { return "Schlüssel unlesbar"; }
+            if (pk.Length != 42 || pk[0] != (byte)'E' || pk[1] != (byte)'d') return "Schlüssel ungültig";
+            string[] lines = signatureText.Replace("\r", "").Split('\n');
+            if (lines.Length < 4) return "Signatur unvollständig";
+            byte[] sig;
+            try { sig = Convert.FromBase64String(lines[1].Trim()); } catch (FormatException) { return "Signatur unlesbar"; }
+            if (sig.Length != 74) return "Signatur hat falsche Länge";
+            string alg = Encoding.ASCII.GetString(sig, 0, 2);
+            if (alg != "Ed" && alg != "ED") return "Unbekanntes Signaturverfahren";
+            for (int i = 2; i < 10; i++) if (sig[i] != pk[i]) return "Signatur passt nicht zum Schlüssel";
+            byte[] message;
+            if (alg == "ED") message = Blake2b.Hash512(data);
+            else { using (var ms = new MemoryStream()) { data.CopyTo(ms); message = ms.ToArray(); } }
+            byte[] key = Slice(pk, 10, 32);
+            byte[] signature = Slice(sig, 10, 64);
+            if (!Ed25519.Verify(key, message, signature)) return "Signatur ungültig";
+            const string prefix = "trusted comment: ";
+            if (!lines[2].StartsWith(prefix)) return "Vertrauenswürdiger Kommentar fehlt";
+            byte[] comment = Encoding.UTF8.GetBytes(lines[2].Substring(prefix.Length));
+            byte[] global;
+            try { global = Convert.FromBase64String(lines[3].Trim()); } catch (FormatException) { return "Signatur des Kommentars unlesbar"; }
+            byte[] globalMessage = new byte[64 + comment.Length];
+            Buffer.BlockCopy(signature, 0, globalMessage, 0, 64);
+            Buffer.BlockCopy(comment, 0, globalMessage, 64, comment.Length);
+            if (!Ed25519.Verify(key, globalMessage, global)) return "Signatur des Kommentars ungültig";
+            return "";
+        }
+    }
+}
+'@
+
+function Initialize-SignatureVerifier {
+    # Übersetzt den C#-Prüfer einmal (Windows PowerShell 5.1: .NET Framework, braucht System.Numerics).
+    if ('WhoopPlusSetup.Minisign' -as [type]) { return }
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        Add-Type -TypeDefinition $script:MinisignSource -Language CSharp
+    }
+    else {
+        Add-Type -TypeDefinition $script:MinisignSource -Language CSharp -ReferencedAssemblies 'System.Numerics'
+    }
+}
+
+function Test-MinisignSignature {
+    # Ergebnis: Valid | Invalid | Unavailable (fremder Schlüssel oder Prüfer nicht verfügbar).
+    #   $SignatureBase64: wie im Tauri-Updater (latest.json bzw. .sig-Datei): Base64 des minisign-Signaturtexts.
+    param([string]$Path, [string]$SignatureBase64, [string]$PublicKey = $script:Config.ILoaderPublicKey)
+    if ([string]::IsNullOrWhiteSpace($SignatureBase64)) { return 'Unavailable' }
+    try { $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($SignatureBase64.Trim())) }
+    catch { return 'Invalid' }
+    try { Initialize-SignatureVerifier }
+    catch { Write-SetupLog "Signaturprüfung nicht verfügbar: $($_.Exception.Message)" 'WARN'; return 'Unavailable' }
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { $reason = [WhoopPlusSetup.Minisign]::Verify($PublicKey, $text, $stream) }
+    finally { $stream.Dispose() }
+    if ($reason -eq '') { return 'Valid' }
+    Write-SetupLog "Signatur: $reason" 'WARN'
+    # Anderer Schlüssel (z. B. neuer Schlüssel bei iloader): nicht prüfbar statt „kaputt“.
+    if ($reason -like '*passt nicht zum Schlüssel*' -or $reason -like 'Schlüssel*') { return 'Unavailable' }
+    return 'Invalid'
+}
+
+function Test-ILoaderSignature {
+    # Holt die Signatur (aus latest.json oder der .sig-Datei der Release) und prüft die Datei damit.
+    param([string]$Path, $Release)
+    $b64 = [string]$Release.SignatureBase64
+    if (-not $b64 -and $Release.SignatureUrl -and (Test-ILoaderDownloadUrl $Release.SignatureUrl -Signature)) {
+        try { $b64 = [string](Invoke-InBackground -ScriptBlock $script:FetchTextScript -ArgumentList @($Release.SignatureUrl, $script:Config.UserAgent)) }
+        catch { Write-SetupLog "Signatur nicht ladbar: $($_.Exception.Message)" 'WARN'; return 'Unavailable' }
+    }
+    return (Test-MinisignSignature -Path $Path -SignatureBase64 $b64)
 }
 
 # endregion
@@ -1428,14 +1853,18 @@ function Start-ScreenTimer {
     param([int]$IntervalMs, [scriptblock]$Action, [switch]$Once)
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = $IntervalMs
-    $timer.Tag = @{ Token = $script:ScreenToken; Action = $Action; Once = [bool]$Once }
+    $timer.Tag = @{ Token = $script:ScreenToken; Action = $Action; Once = [bool]$Once; Running = $false }
     $timer.Add_Tick({
             param($src)
             $info = $src.Tag
             if ($info.Once) { $src.Stop() }
             if ($info.Token -ne $script:ScreenToken -or $script:Closing) { $src.Stop(); return }
+            # Läuft die vorige Prüfung noch (Hintergrund + DoEvents), diesen Takt auslassen.
+            if ($info.Running) { return }
+            $info.Running = $true
             try { & $info.Action }
             catch { Show-Problem -Text 'Da ist etwas schiefgelaufen.' -Action 'Klicke auf **Nochmal versuchen**.' -Exception $_.Exception }
+            finally { $info.Running = $false }
         })
     $null = $script:ScreenTimers.Add($timer)
     $timer.Start()
@@ -1581,7 +2010,7 @@ function Copy-HelpReport {
         "Windows: $(($script:Facts['Windows'] | Out-String).Trim())",
         '--- Bericht (letzte Zeilen) ---'
     )
-    try { $lines += @(Get-Content -LiteralPath (Get-LogPath) -Tail 250 -ErrorAction Stop) } catch { $lines += '(kein Bericht)' }
+    try { $lines += @(Get-Content -LiteralPath (Get-LogPath) -Tail 250 -Encoding UTF8 -ErrorAction Stop) } catch { $lines += '(kein Bericht)' }
     $ok = Set-ClipboardText ($lines -join "`r`n")
     if ($ok) {
         $msg = "Ein Fehlerbericht ist jetzt kopiert.`n`nFüge ihn mit Strg + V in eine Nachricht ein (z. B. E-Mail oder WhatsApp) und schicke ihn an die Person, die dir hilft.`n`nDeine Apple-ID oder Passwörter stehen nicht darin."
@@ -1655,7 +2084,7 @@ function Invoke-AutoWindows {
 
 function Invoke-AutoAppleSoftware {
     Set-Status 'busy' 'Ich schaue nach …'
-    $apple = Test-AppleSoftware
+    $apple = Invoke-Check 'Test-AppleSoftware'
     Write-SetupLog ("Apple-Programm: vorhanden={0} läuft={1} ({2})" -f $apple.Present, $apple.ServiceRunning, $apple.Source)
     if ($apple.Present) {
         Complete-AutoStep 'Das Apple-Programm ist schon da.'
@@ -1667,8 +2096,14 @@ function Invoke-AutoAppleSoftware {
 }
 
 function Wait-AppleSoftware {
+    # Wartet (ohne das Fenster zu blockieren), bis das Apple-Programm erkannt wird.
     param([int]$TimeoutMs)
-    return (Wait-UiCondition -Until { (Test-AppleSoftware).Present } -TimeoutMs $TimeoutMs -IntervalMs 1500)
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($watch.ElapsedMilliseconds -lt $TimeoutMs -and -not $script:Closing) {
+        if ((Invoke-Check 'Test-AppleSoftware').Present) { return $true }
+        $null = Wait-UiCondition -Until { $false } -TimeoutMs 1500 -IntervalMs 100
+    }
+    return $false
 }
 
 function Install-AppleSoftwareUi {
@@ -1692,10 +2127,15 @@ function Install-AppleSoftwareUi {
             $kind = Get-WingetResultKind ([int]$result.ExitCode)
             Write-SetupLog ("winget {0}: Exit {1} ({2})`n{3}" -f $method, $result.ExitCode, $kind, $result.Output)
         }
-        catch { Write-SetupLog ("winget {0} fehlgeschlagen: {1}" -f $method, $_.Exception.Message) 'WARN' }
+        catch { $kind = 'Failed'; Write-SetupLog ("winget {0} fehlgeschlagen: {1}" -f $method, $_.Exception.Message) 'WARN' }
         Set-Status 'busy' 'Ich prüfe die Installation …'
         if (Wait-AppleSoftware -TimeoutMs 30000) {
             Complete-AutoStep 'Das Apple-Programm ist installiert.'
+            return
+        }
+        if ($kind -eq 'HashMismatch') {
+            # Beschädigter Download: kein anderer Weg, sondern einfach erneut versuchen lassen.
+            Show-Problem -Text 'Download beschädigt.' -Action 'Bitte klicke auf **Nochmal versuchen**.'
             return
         }
     }
@@ -1709,7 +2149,7 @@ function Show-AppleManualInstall {
     Set-PrimaryButton 'Nochmal prüfen' 'Retry'
     Set-SecondaryButtons @(@{ Text = 'Apple-Geräte (Microsoft Store)'; Action = 'OpenUrl:' + $script:Config.AppleDevicesStoreUrl })
     Start-ScreenTimer -IntervalMs 3000 -Action {
-        if ((Test-AppleSoftware).Present) {
+        if ((Invoke-Check 'Test-AppleSoftware').Present) {
             Stop-ScreenTimers
             Write-SetupLog 'Apple-Programm nach manueller Installation gefunden'
             Complete-AutoStep 'Das Apple-Programm ist installiert.'
@@ -1720,7 +2160,7 @@ function Show-AppleManualInstall {
 function Invoke-AutoConnect {
     $script:ConnectStarted = Get-Date
     $script:ConnectHintShown = $false
-    $first = Test-IPhoneConnected
+    $first = Invoke-Check 'Test-IPhoneConnected'
     if ($first.Connected) {
         Write-SetupLog "iPhone erkannt ($($first.Via))"
         Complete-AutoStep 'iPhone gefunden.' 1000
@@ -1729,8 +2169,9 @@ function Invoke-AutoConnect {
     Set-Busy $false
     Set-Status 'busy' 'Ich warte auf dein iPhone …'
     Set-PrimaryButton $null $null
+    # Alle 2 s im Hintergrund nachsehen (das Fenster ruckelt dabei nicht).
     Start-ScreenTimer -IntervalMs 2000 -Action {
-        $check = Test-IPhoneConnected
+        $check = Invoke-Check 'Test-IPhoneConnected'
         if ($check.Connected) {
             Stop-ScreenTimers
             Write-SetupLog "iPhone erkannt ($($check.Via))"
@@ -1747,16 +2188,51 @@ function Invoke-AutoConnect {
     }
 }
 
+function Get-DownloadDir {
+    $dir = Join-Path (Get-AppDataDir) 'downloads'
+    if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force }
+    return $dir
+}
+
+function Remove-PartialDownloads {
+    # Halbe Downloads (*.part) wegräumen – vor jedem Download und beim Beenden.
+    try {
+        $dir = Join-Path (Get-AppDataDir) 'downloads'
+        if (Test-Path -LiteralPath $dir) { Get-ChildItem -LiteralPath $dir -Filter '*.part' -File | Remove-Item -Force -ErrorAction SilentlyContinue }
+    }
+    catch { Write-SetupLog "Teil-Downloads nicht gelöscht: $($_.Exception.Message)" 'WARN' }
+}
+
+function Show-ILoaderManualInstall {
+    # Ohne sichere Prüfung wird nichts installiert: iloader-Seite öffnen und warten, bis iloader da ist.
+    param($Release)
+    $script:PendingILoaderVersion = [string](Get-PropValue $Release 'Version')
+    Open-Url $script:Config.ILoaderReleasesUrl
+    Set-Busy $false
+    Set-Status 'warn' "Ich konnte die Datei nicht sicher prüfen und installiere sie deshalb nicht.`nLade auf der geöffneten Seite **iloader-windows-x64.msi** und öffne die Datei. Ich warte hier."
+    Set-PrimaryButton 'Nochmal versuchen' 'Retry'
+    Set-SecondaryButtons @(@{ Text = 'iloader-Seite öffnen'; Action = 'OpenUrl:' + $script:Config.ILoaderReleasesUrl })
+    Start-ScreenTimer -IntervalMs 3000 -Action {
+        $now = Invoke-Check 'Get-InstalledILoader'
+        if ($null -ne $now -and $now.Installed -and -not (Test-UpdateAvailable $now.Version $script:PendingILoaderVersion)) {
+            Stop-ScreenTimers
+            Write-SetupLog "iloader nach manueller Installation gefunden: $($now.Version)"
+            Complete-AutoStep "iloader ist bereit (Version $($now.Version))."
+        }
+    }
+}
+
 function Invoke-AutoILoader {
     Set-Status 'busy' 'Ich prüfe iloader …'
-    $installed = Get-InstalledILoader
+    $installed = Invoke-Check 'Get-InstalledILoader'
     $release = Get-ILoaderLatestRelease
     $installedVersion = $null
     if ($null -ne $installed -and $installed.Installed) { $installedVersion = $installed.Version }
-    Write-SetupLog ("iloader installiert: {0} ({1}); neueste: {2} {3}" -f $installedVersion, (Get-PropValue $installed 'ExePath'), (Get-PropValue $release 'Version'), (Get-PropValue $release 'Url'))
+    Write-SetupLog ("iloader installiert: {0} ({1}); neueste: {2} {3} [{4}]" -f $installedVersion, (Get-PropValue $installed 'ExePath'),
+        (Get-PropValue $release 'Version'), (Get-PropValue $release 'Url'), (Get-PropValue $release 'Source'))
 
     if ($null -eq $release) {
-        if ($installedVersion -or ($null -ne $installed -and $installed.Installed)) {
+        if ($null -ne $installed -and $installed.Installed) {
             Complete-AutoStep 'iloader ist installiert.' 1500
             return
         }
@@ -1767,11 +2243,16 @@ function Invoke-AutoILoader {
         Complete-AutoStep "iloader ist aktuell (Version $installedVersion)."
         return
     }
+    # Doppelte Sicherung: nur zugelassene Adressen und harmlose Dateinamen.
+    if (-not (Test-ILoaderDownloadUrl $release.Url) -or (Get-SafeFileName $release.Url) -cne $release.FileName) {
+        Write-SetupLog "Download-Adresse abgelehnt: $($release.Url)" 'ERROR'
+        Show-ILoaderManualInstall $release
+        return
+    }
 
-    # Herunterladen
-    $dir = Join-Path (Get-AppDataDir) 'downloads'
-    if (-not (Test-Path -LiteralPath $dir)) { $null = New-Item -ItemType Directory -Path $dir -Force }
-    $target = Join-Path $dir $release.FileName
+    # Herunterladen (alte Teil-Downloads vorher weg)
+    Remove-PartialDownloads
+    $target = Join-Path (Get-DownloadDir) $release.FileName
     $partial = $target + '.part'
     $verb = 'wird geladen'
     if ($installedVersion) { $verb = 'wird aktualisiert' }
@@ -1789,19 +2270,28 @@ function Invoke-AutoILoader {
         }
     }
     catch {
+        # Netz, DNS, HTTP-Fehler oder Platte voll: Teildatei weg, freundliche Meldung.
+        $progress.Cancel = $true
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
         Show-Problem -Text 'Der Download hat nicht geklappt.' -Action 'Bitte prüfe die Internetverbindung und klicke auf **Nochmal versuchen**.' -Exception $_.Exception
         return
     }
+
+    # Prüfen: Signatur (minisign), SHA-256 und Größe laut GitHub. Ohne gültige Prüfung wird nicht installiert.
+    Set-Status 'busy' 'Ich prüfe die Datei …'
+    [System.Windows.Forms.Application]::DoEvents()
     $actualSize = (Get-Item -LiteralPath $partial).Length
-    $expected = [long]$release.Size
-    if ($expected -le 0) { $expected = [long]$progress.Total }
     $actualSha = $null
     if ($release.Sha256) { $actualSha = (Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash }
-    $check = Test-DownloadComplete -ActualSize $actualSize -ExpectedSize $expected -ActualSha256 $actualSha -ExpectedSha256 $release.Sha256
-    Write-SetupLog ("Download {0}: {1} Bytes, erwartet {2}, SHA256 {3} -> {4} {5}" -f $release.FileName, $actualSize, $expected, $actualSha, $check.Ok, $check.Reason)
-    if (-not $check.Ok) {
+    $signature = Test-ILoaderSignature -Path $partial -Release $release
+    $verdict = Get-DownloadVerdict -ActualSize $actualSize -ExpectedSize ([long]$release.Size) -ActualSha256 $actualSha `
+        -ExpectedSha256 $release.Sha256 -Signature $signature
+    Write-SetupLog ("Download {0}: {1} Bytes (GitHub: {2}), SHA256 {3}, Signatur {4} -> {5} ({6})" -f $release.FileName, $actualSize,
+        $release.Size, $actualSha, $signature, $verdict.Kind, $verdict.Reason)
+    if (-not $verdict.Ok) {
         Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
-        Show-Problem -Text 'Der Download ist unvollständig.' -Action 'Klicke auf **Nochmal versuchen**.'
+        if ($verdict.Kind -eq 'Unverifiable') { Show-ILoaderManualInstall $release; return }
+        Show-Problem -Text 'Die Datei ist beschädigt oder unvollständig.' -Action 'Klicke auf **Nochmal versuchen**.'
         return
     }
     Move-Item -LiteralPath $partial -Destination $target -Force
@@ -1811,7 +2301,7 @@ function Invoke-AutoILoader {
     Stop-ILoaderIfRunning
     $result = Install-ILoaderPackage -Path $target
     Write-SetupLog "Installation iloader: $result"
-    $after = Get-InstalledILoader
+    $after = Invoke-Check 'Get-InstalledILoader'
     $ok = ($null -ne $after -and $after.Installed -and -not (Test-UpdateAvailable $after.Version $release.Version))
     if ($ok) {
         Complete-AutoStep "iloader ist bereit (Version $($after.Version))."
@@ -1833,19 +2323,19 @@ function Install-ILoaderPackage {
     try {
         if ($Path -match '\.msi$') {
             $msiLog = Join-Path (Get-AppDataDir) 'iloader-install.txt'
-            $msiArgs = @('/i', ('"{0}"' -f $Path), '/qb!', '/norestart', '/l*', ('"{0}"' -f $msiLog))
-            $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Verb RunAs -PassThru -ErrorAction Stop
+            $process = Start-InstallerProcess -FileName 'msiexec.exe' -Arguments ('/i "{0}" /qb! /norestart /l* "{1}"' -f $Path, $msiLog) -Elevated
         }
         else {
             # EXE-Installer (NSIS) installiert still für den aktuellen Benutzer.
-            $process = Start-Process -FilePath $Path -ArgumentList '/S' -PassThru -ErrorAction Stop
+            $process = Start-InstallerProcess -FileName $Path -Arguments '/S'
         }
     }
     catch {
         if (Test-IsUserCancelled $_.Exception) { Write-SetupLog 'Windows-Abfrage abgelehnt' 'WARN'; return 'Cancelled' }
-        Write-SetupLog "Installer-Start fehlgeschlagen: $($_.Exception.Message)" 'ERROR'
+        Write-SetupLog "Installer-Start fehlgeschlagen: $($_.Exception.ToString())" 'ERROR'
         return 'Failed'
     }
+    if ($null -eq $process) { return 'Unknown' }
     $null = Wait-UiCondition -Until { $process.HasExited } -IntervalMs 250
     try { return (Get-MsiResultKind $process.ExitCode) } catch { return 'Unknown' }
 }
@@ -1855,6 +2345,7 @@ function Start-Gui {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $script:State = Read-SetupState
     Write-SetupLog ("Start {0}, gemerkt: {1}" -f $script:HelperVersion, (([pscustomobject]$script:State | ConvertTo-Json -Compress)))
+    Remove-PartialDownloads
     $form = New-MainForm
     $script:UiActive = $true
     # Erst wenn das Fenster sichtbar ist: so passen sich die Textfelder sicher an ihren Inhalt an.
@@ -1866,6 +2357,8 @@ function Start-Gui {
     finally {
         $script:UiActive = $false
         Stop-ScreenTimers
+        Remove-PartialDownloads
+        Close-CheckRunspace
         $form.Dispose()
         Write-SetupLog 'Ende'
     }
@@ -1909,6 +2402,27 @@ function Invoke-SelfTest {
         & $add 'Ablaufpläne' ($missing.Count -eq 0) ("fehlende Bilder: {0}" -f ($missing -join ','))
     }
     catch { & $add 'Ablaufpläne' $false $_.Exception.Message }
+
+    try {
+        # Gleicher Weg wie im Fenster: Prüfung in einem eigenen Runspace mit kopierten Funktionen.
+        $bg = Invoke-InBackground -ScriptBlock { Test-IPhoneConnected } -Shared -ForceRunspace
+        Close-CheckRunspace
+        & $add 'Hintergrund-Prüfung' ($null -ne $bg -and $null -ne $bg.PSObject.Properties['Connected']) ("verbunden={0}" -f $bg.Connected)
+    }
+    catch { & $add 'Hintergrund-Prüfung' $false $_.Exception.ToString() }
+
+    try {
+        Initialize-SignatureVerifier
+        $abc = -join ([WhoopPlusSetup.Blake2b]::Hash512([System.Text.Encoding]::ASCII.GetBytes('abc')) | ForEach-Object { $_.ToString('x2') })
+        $hex = { param($h) [byte[]]@(for ($i = 0; $i -lt $h.Length; $i += 2) { [System.Convert]::ToByte($h.Substring($i, 2), 16) }) }
+        $pk = & $hex '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c'
+        $sig = & $hex '92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00'
+        $good = [WhoopPlusSetup.Ed25519]::Verify($pk, [byte[]]@(0x72), $sig)
+        $bad = [WhoopPlusSetup.Ed25519]::Verify($pk, [byte[]]@(0x73), $sig)
+        $okAbc = $abc.StartsWith('ba80a53f981c4d0d6a2797b69f12f6e9')
+        & $add 'Signaturprüfung (BLAKE2b, Ed25519)' ($okAbc -and $good -and -not $bad) ("blake2b={0} rfc8032={1} manipuliert={2}" -f $okAbc, $good, $bad)
+    }
+    catch { & $add 'Signaturprüfung (BLAKE2b, Ed25519)' $false $_.Exception.ToString() }
 
     try {
         $state = ConvertTo-SetupState $null

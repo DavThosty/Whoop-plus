@@ -106,14 +106,62 @@ Describe 'iloader-Release' {
         $info.FileName | Should -Be 'iloader-windows-x64.msi'
         $info.Kind | Should -Be 'msi'
         $info.Size | Should -Be 0
+        $info.SignatureBase64 | Should -Be 's'
     }
-    It 'prüft Downloads auf Größe und Prüfsumme' {
-        (Test-DownloadComplete -ActualSize 100 -ExpectedSize 100).Ok | Should -BeTrue
-        (Test-DownloadComplete -ActualSize 99 -ExpectedSize 100).Ok | Should -BeFalse
-        (Test-DownloadComplete -ActualSize 0 -ExpectedSize 0).Ok | Should -BeFalse
-        (Test-DownloadComplete -ActualSize 5 -ExpectedSize 0).Ok | Should -BeTrue
-        (Test-DownloadComplete -ActualSize 5 -ExpectedSize 5 -ActualSha256 'aa' -ExpectedSha256 'AA').Ok | Should -BeTrue
-        (Test-DownloadComplete -ActualSize 5 -ExpectedSize 5 -ActualSha256 'aa' -ExpectedSha256 'bb').Ok | Should -BeFalse
+    It 'installiert nur geprüfte Downloads: <Name>' -TestCases @(
+        @{ Name = 'Größe laut GitHub passt'; Size = 100; Expected = 100; Sha = $null; ExpSha = $null; Sig = 'Unavailable'; Kind = 'Verified' }
+        @{ Name = 'Größe falsch'; Size = 99; Expected = 100; Sha = $null; ExpSha = $null; Sig = 'Unavailable'; Kind = 'Corrupt' }
+        @{ Name = 'leer'; Size = 0; Expected = 0; Sha = $null; ExpSha = $null; Sig = 'Valid'; Kind = 'Corrupt' }
+        @{ Name = 'nichts bekannt (latest.json ohne Signatur)'; Size = 5; Expected = 0; Sha = $null; ExpSha = $null; Sig = 'Unavailable'; Kind = 'Unverifiable' }
+        @{ Name = 'nur Signatur (latest.json)'; Size = 5; Expected = 0; Sha = $null; ExpSha = $null; Sig = 'Valid'; Kind = 'Verified' }
+        @{ Name = 'Signatur ungültig trotz passender Größe'; Size = 5; Expected = 5; Sha = $null; ExpSha = $null; Sig = 'Invalid'; Kind = 'Corrupt' }
+        @{ Name = 'SHA-256 passt (Groß/klein egal)'; Size = 5; Expected = 5; Sha = 'aa'; ExpSha = 'AA'; Sig = 'Unavailable'; Kind = 'Verified' }
+        @{ Name = 'SHA-256 falsch'; Size = 5; Expected = 5; Sha = 'aa'; ExpSha = 'bb'; Sig = 'Valid'; Kind = 'Corrupt' }
+        @{ Name = 'SHA-256 erwartet, aber nicht berechnet'; Size = 5; Expected = 5; Sha = $null; ExpSha = 'bb'; Sig = 'Unavailable'; Kind = 'Corrupt' }
+    ) {
+        $v = Get-DownloadVerdict -ActualSize $Size -ExpectedSize $Expected -ActualSha256 $Sha -ExpectedSha256 $ExpSha -Signature $Sig
+        $v.Kind | Should -Be $Kind
+        $v.Ok | Should -Be ($Kind -eq 'Verified')
+        $v.Reason | Should -Not -BeNullOrEmpty
+    }
+    It 'lädt nur von den iloader-Releases: <Url> = <Ok>' -TestCases @(
+        @{ Url = 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi'; Ok = $true }
+        @{ Url = 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader_2.5.0_x64_en-US.exe'; Ok = $true }
+        @{ Url = 'http://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi'; Ok = $false }
+        @{ Url = 'https://github.com/evil/iloader/releases/download/v2.4.0/iloader-windows-x64.msi'; Ok = $false }
+        @{ Url = 'https://github.com.evil.example/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi'; Ok = $false }
+        @{ Url = 'https://github.com/nab138/iloader/releases/download/v2.4.0/../../x/iloader.msi'; Ok = $false }
+        @{ Url = 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader windows.msi'; Ok = $false }
+        @{ Url = 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi?x=1'; Ok = $false }
+        @{ Url = 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.bat'; Ok = $false }
+        @{ Url = 'https://github.com/NAB138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi'; Ok = $false }
+    ) {
+        Test-ILoaderDownloadUrl $Url | Should -Be $Ok
+    }
+    It 'prüft auch die Adresse der Signatur' {
+        Test-ILoaderDownloadUrl 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi.sig' -Signature | Should -BeTrue
+        Test-ILoaderDownloadUrl 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi.sig' | Should -BeFalse
+        Test-ILoaderDownloadUrl 'https://example.com/iloader-windows-x64.msi.sig' -Signature | Should -BeFalse
+    }
+    It 'baut sichere Dateinamen' {
+        Get-SafeFileName 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi' | Should -Be 'iloader-windows-x64.msi'
+        # Je nach .NET wird %2E%2E%5C anders normalisiert – entscheidend: nie Pfadteile im Namen.
+        $tricky = Get-SafeFileName 'https://x/a/%2E%2E%5Cevil.msi'
+        if ($tricky) { $tricky | Should -Not -Match '[\\/]|\.\.' }
+        Get-SafeFileName 'https://x/a/b%20c.msi' | Should -BeNullOrEmpty
+        Get-SafeFileName 'https://x/a/.hidden.msi' | Should -BeNullOrEmpty
+        Get-SafeFileName 'kein link' | Should -BeNullOrEmpty
+        Get-SafeFileName '' | Should -BeNullOrEmpty
+    }
+    It 'verwirft Releases mit fremden Adressen' {
+        $evil = [pscustomobject]@{ name = 'iloader-windows-x64.msi'; size = 1; browser_download_url = 'https://evil.example/iloader-windows-x64.msi' }
+        ConvertFrom-ILoaderApiRelease ([pscustomobject]@{ tag_name = 'v9.9.9'; assets = @($evil) }) | Should -BeNullOrEmpty
+        $json = '{"version":"9.9.9","platforms":{"windows-x86_64":{"signature":"abc","url":"https://evil.example/iloader-windows-x64.msi"}}}' | ConvertFrom-Json
+        ConvertFrom-ILoaderLatestJson $json | Should -BeNullOrEmpty
+    }
+    It 'findet die .sig-Datei der Release' {
+        $info = ConvertFrom-ILoaderApiRelease ([pscustomobject]@{ tag_name = 'v2.4.0'; assets = $script:Iloader240Assets })
+        $info.SignatureUrl | Should -Be 'https://github.com/nab138/iloader/releases/download/v2.4.0/iloader-windows-x64.msi.sig'
     }
 }
 
@@ -182,6 +230,8 @@ Describe 'Apple-Programm installieren' {
         Get-WingetResultKind -1978335189 | Should -Be 'AlreadyInstalled'
         Get-WingetResultKind -1978335212 | Should -Be 'NotFound'
         Get-WingetResultKind 5 | Should -Be 'Failed'
+        Get-WingetResultKind -1978335215 | Should -Be 'HashMismatch'   # 0x8A150011 INSTALLER_HASH_MISMATCH
+        Get-WingetResultKind ([int]0x8A150011) | Should -Be 'HashMismatch'
         Get-MsiResultKind 0 | Should -Be 'Success'
         Get-MsiResultKind 3010 | Should -Be 'Success'
         Get-MsiResultKind 1602 | Should -Be 'Cancelled'
@@ -427,6 +477,63 @@ Describe 'iPhone-Erkennung' {
     }
 }
 
+Describe 'Signaturprüfung (minisign wie der iloader-Updater)' {
+    BeforeAll {
+        $script:Fixtures = Join-Path $PSScriptRoot 'fixtures'
+        $script:SamplePath = Join-Path $script:Fixtures 'signed-sample.bin'
+        $script:SampleSig = (Get-Content (Join-Path $script:Fixtures 'signed-sample.bin.sig') -Raw).Trim()
+        $script:SamplePub = (Get-Content (Join-Path $script:Fixtures 'signed-sample.pub') -Raw).Trim()
+        $script:ILoaderSig = (Get-Content (Join-Path $script:Fixtures 'iloader-2.4.0-windows-x64.msi.sig') -Raw).Trim()
+        Initialize-SignatureVerifier
+        $script:Hex = { param($h) [byte[]]@(for ($i = 0; $i -lt $h.Length; $i += 2) { [System.Convert]::ToByte($h.Substring($i, 2), 16) }) }
+    }
+    It 'BLAKE2b-512 stimmt (RFC 7693)' {
+        $abc = -join ([WhoopPlusSetup.Blake2b]::Hash512([System.Text.Encoding]::ASCII.GetBytes('abc')) | ForEach-Object { $_.ToString('x2') })
+        $abc | Should -Be 'ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923'
+        $empty = -join ([WhoopPlusSetup.Blake2b]::Hash512([byte[]]@()) | ForEach-Object { $_.ToString('x2') })
+        $empty | Should -Be '786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce'
+    }
+    It 'Ed25519 stimmt (RFC 8032, Test 1 und 2)' {
+        $pk1 = & $script:Hex 'd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'
+        $sig1 = & $script:Hex 'e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b'
+        [WhoopPlusSetup.Ed25519]::Verify($pk1, [byte[]]@(), $sig1) | Should -BeTrue
+        $pk2 = & $script:Hex '3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c'
+        $sig2 = & $script:Hex '92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00'
+        [WhoopPlusSetup.Ed25519]::Verify($pk2, [byte[]]@(0x72), $sig2) | Should -BeTrue
+        [WhoopPlusSetup.Ed25519]::Verify($pk2, [byte[]]@(0x73), $sig2) | Should -BeFalse
+        $sig2[63] = $sig2[63] -bxor 1
+        [WhoopPlusSetup.Ed25519]::Verify($pk2, [byte[]]@(0x72), $sig2) | Should -BeFalse
+    }
+    It 'gültige Signatur -> Valid' {
+        Test-MinisignSignature -Path $script:SamplePath -SignatureBase64 $script:SampleSig -PublicKey $script:SamplePub | Should -Be 'Valid'
+    }
+    It 'veränderte Datei -> Invalid' {
+        $copy = Join-Path ([System.IO.Path]::GetTempPath()) ('wps-' + [guid]::NewGuid() + '.bin')
+        $bytes = [System.IO.File]::ReadAllBytes($script:SamplePath)
+        $bytes[10] = $bytes[10] -bxor 1
+        [System.IO.File]::WriteAllBytes($copy, $bytes)
+        try { Test-MinisignSignature -Path $copy -SignatureBase64 $script:SampleSig -PublicKey $script:SamplePub | Should -Be 'Invalid' }
+        finally { Remove-Item $copy -Force }
+    }
+    It 'echte iloader-Signatur passt nicht zu fremder Datei -> Invalid' {
+        Test-MinisignSignature -Path $script:SamplePath -SignatureBase64 $script:ILoaderSig | Should -Be 'Invalid'
+    }
+    It 'Signatur eines anderen Schlüssels -> Unavailable (nicht prüfbar, nicht „kaputt“)' {
+        Test-MinisignSignature -Path $script:SamplePath -SignatureBase64 $script:SampleSig | Should -Be 'Unavailable'
+    }
+    It 'keine oder kaputte Signatur' {
+        Test-MinisignSignature -Path $script:SamplePath -SignatureBase64 '' | Should -Be 'Unavailable'
+        Test-MinisignSignature -Path $script:SamplePath -SignatureBase64 '%%%' | Should -Be 'Invalid'
+    }
+    It 'der eingebaute iloader-Schlüssel passt zur Schlüssel-ID der echten Signatur' {
+        $pk = [System.Convert]::FromBase64String($script:Config.ILoaderPublicKey)
+        $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($script:ILoaderSig))
+        $sig = [System.Convert]::FromBase64String(($text -split "`n")[1].Trim())
+        [System.Text.Encoding]::ASCII.GetString($sig, 0, 2) | Should -Be 'ED'
+        ($pk[2..9] -join ',') | Should -Be ($sig[2..9] -join ',')
+    }
+}
+
 Describe 'Hilfsfunktionen' {
     It 'Get-PropValue liest Hashtables und Objekte, fehlend = $null' {
         Get-PropValue @{ a = 1 } 'a' | Should -Be 1
@@ -434,10 +541,34 @@ Describe 'Hilfsfunktionen' {
         Get-PropValue ([pscustomobject]@{ a = 2 }) 'b' | Should -BeNullOrEmpty
         Get-PropValue $null 'a' | Should -BeNullOrEmpty
     }
-    It 'erkennt eine abgelehnte Windows-Abfrage' {
-        $inner = New-Object System.ComponentModel.Win32Exception -ArgumentList 1223
-        $outer = New-Object System.InvalidOperationException -ArgumentList 'x', $inner
-        Test-IsUserCancelled $outer | Should -BeTrue
+    It 'erkennt eine abgelehnte Windows-Abfrage (echte Form der Ausnahme)' {
+        # So kommt ein Fehler aus [Diagnostics.Process]::Start in PowerShell an: MethodInvocationException -> Win32Exception.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = Join-Path ([System.IO.Path]::GetTempPath()) ('gibt-es-nicht-' + [guid]::NewGuid() + '.exe')
+        $psi.UseShellExecute = $false
+        $caught = $null
+        try { $null = [System.Diagnostics.Process]::Start($psi) } catch { $caught = $_.Exception }
+        $caught | Should -BeOfType ([System.Management.Automation.MethodInvocationException])
+        Get-Win32ErrorCode $caught | Should -Be 2              # Datei nicht gefunden
+        Test-IsUserCancelled $caught | Should -BeFalse
+        # Gleiche Form mit 1223 (ERROR_CANCELLED) = „Nein“ in der Windows-Abfrage.
+        $uac = New-Object System.Management.Automation.MethodInvocationException -ArgumentList 'Start', (New-Object System.ComponentModel.Win32Exception -ArgumentList 1223)
+        Test-IsUserCancelled $uac | Should -BeTrue
+        Test-IsUserCancelled (New-Object System.ComponentModel.Win32Exception -ArgumentList 1223) | Should -BeTrue
         Test-IsUserCancelled (New-Object System.Exception 'y') | Should -BeFalse
+        Test-IsUserCancelled $null | Should -BeFalse
+    }
+    It 'Prüfungen laufen im eigenen Runspace und sehen die Einstellungen' {
+        $r = Invoke-InBackground -ScriptBlock { [pscustomobject]@{ Port = $Config.UsbmuxPort; Check = (Test-IPhoneConnected) } } -Shared -ForceRunspace
+        Close-CheckRunspace
+        $r.Port | Should -Be 27015
+        $r.Check.PSObject.Properties.Name | Should -Contain 'Connected'
+    }
+    It 'meldet Netzfehler beim Download und hinterlässt keine Teildatei' {
+        $part = Join-Path ([System.IO.Path]::GetTempPath()) ('wps-' + [guid]::NewGuid() + '.part')
+        Set-Content -LiteralPath $part -Value 'alt'
+        $progress = [hashtable]::Synchronized(@{ Done = 0L; Total = 0L; Cancel = $false })
+        { Invoke-InBackground -ScriptBlock $script:DownloadScript -ArgumentList @('https://127.0.0.1:9/x.msi', $part, $progress, 'test') -ForceRunspace } | Should -Throw
+        Test-Path -LiteralPath $part | Should -BeFalse
     }
 }

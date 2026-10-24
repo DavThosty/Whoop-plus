@@ -27,6 +27,10 @@ env:
   TOOL_DIR: tools/windows-setup
   EXE_NAME: WhoopPlus-Setup.exe
   ARTIFACT: WhoopPlus-Setup
+  # Feste Modul-Versionen (zuletzt erfolgreich im CI): ein neues Modul ändert den Build nicht unbemerkt.
+  PESTER_VERSION: '5.9.0'
+  PSSA_VERSION: '1.25.0'
+  PS2EXE_VERSION: '1.0.18'
 
 jobs:
   lint:
@@ -41,9 +45,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq [version]$env:PSSA_VERSION })) {
+            Install-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION -Scope CurrentUser -Force
           }
+          Import-Module PSScriptAnalyzer -RequiredVersion $env:PSSA_VERSION
           $results = @(Invoke-ScriptAnalyzer -Path $env:TOOL_DIR -Recurse -Settings "$env:TOOL_DIR/PSScriptAnalyzerSettings.psd1")
           $results | Format-Table -AutoSize Severity, ScriptName, Line, RuleName, Message | Out-String -Width 250
           foreach ($r in $results) {
@@ -82,11 +87,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -ge [version]'5.5.0' })) {
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$env:PESTER_VERSION })) {
             $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-            Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+            Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
           }
-          Import-Module Pester -MinimumVersion 5.5.0
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
           $c = New-PesterConfiguration
           $c.Run.Path = "$env:TOOL_DIR\tests"
           $c.Run.Exit = $true
@@ -97,10 +102,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -ge [version]'5.5.0' })) {
-            Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version -eq [version]$env:PESTER_VERSION })) {
+            Install-Module Pester -RequiredVersion $env:PESTER_VERSION -Scope CurrentUser -Force -SkipPublisherCheck
           }
-          Import-Module Pester -MinimumVersion 5.5.0
+          Import-Module Pester -RequiredVersion $env:PESTER_VERSION
           $c = New-PesterConfiguration
           $c.Run.Path = "$env:TOOL_DIR/tests"
           $c.Run.Exit = $true
@@ -121,7 +126,7 @@ jobs:
         run: |
           [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
           $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-          Install-Module ps2exe -Scope CurrentUser -Force
+          Install-Module ps2exe -RequiredVersion $env:PS2EXE_VERSION -Scope CurrentUser -Force
           Get-Module -ListAvailable ps2exe | Select-Object Name, Version
 
       - name: WhoopPlus-Setup.exe bauen

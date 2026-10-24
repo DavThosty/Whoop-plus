@@ -96,7 +96,14 @@ Hinweise:
 - Gemerkte Schritte: `%LOCALAPPDATA%\WhoopPlusSetup\state.json`. Löschen = wie ein erster Start.
 - Erkennung des iPhones: Apple-Gerätedienst (usbmuxd auf `127.0.0.1:27015`, Anfrage `ListDevices`),
   ersatzweise USB-Gerät mit Hersteller `05AC`.
-- iloader: neueste Version über die GitHub-API (`nab138/iloader`), ersatzweise `latest.json`; Download
-  wird auf Größe und – falls GitHub sie liefert – SHA-256 geprüft und mit `msiexec /qb!` installiert.
+- iloader: neueste Version über die GitHub-API (`nab138/iloader`), ersatzweise `latest.json`. Geladen wird nur von
+  `https://github.com/nab138/iloader/releases/download/…/*.msi|exe` (Positivliste, sicherer Dateiname).
+  Installiert wird nur, wenn mindestens eine Prüfung passt und keine fehlschlägt: **minisign-Signatur** des
+  iloader-Updaters (fest eingebauter öffentlicher Schlüssel aus `src-tauri/tauri.conf.json`, ID `E0D7460DFA37E536`;
+  BLAKE2b + Ed25519 als kleines C#-Stück, das per `Add-Type` übersetzt wird), **SHA-256** und **Größe** laut GitHub-API.
+  Lässt sich nichts prüfen (z. B. neuer Schlüssel), öffnet der Helfer die iloader-Seite zum Selbst-Laden.
+  Installation mit `msiexec /qb!` über die Windows-Abfrage (`runas`); „Nein“ wird als Win32-Fehler 1223 erkannt.
+- iPhone- und Apple-Programm-Suche laufen in einem eigenen Runspace (das Fenster ruckelt nicht).
+- Modul-Versionen sind fest: Pester 5.9.0, PSScriptAnalyzer 1.25.0, ps2exe 1.0.18 (Workflow und `build.ps1`).
 - Apple-Programm: wie von SideStore empfohlen zuerst iTunes (`Apple.iTunes`), ersatzweise „Apple-Geräte“ aus dem
   Microsoft Store (`9NP83LWLPZ9K`), beides über winget; ohne winget öffnet sich Apples Download-Seite.

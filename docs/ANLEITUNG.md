@@ -24,6 +24,9 @@ Diese Anleitung ist alles, was du brauchst. Einmal einrichten (ca. 30 Minuten), 
 3. Den Einrichtungs-Helfer laden:
    **[WhoopPlus-Setup.exe](https://github.com/DavThosty/Whoop-plus/releases/download/setup-helper/WhoopPlus-Setup.exe)**
 4. Die Datei starten. Windows fragt einmal nach: auf **Weitere Informationen** → **Trotzdem ausführen** klicken.
+   Die Warnung kommt, weil das Programm keine gekaufte Signatur hat – der Quellcode ist offen auf GitHub
+   ([tools/windows-setup](../tools/windows-setup)). Hat Windows Defender die Datei entfernt: **Windows-Sicherheit** →
+   **Viren- & Bedrohungsschutz** → **Schutzverlauf** → Eintrag öffnen → **Aktionen** → **Wiederherstellen**.
 5. iPhone per USB anschließen. Fragt das iPhone **„Diesem Computer vertrauen?“** → **Vertrauen** → Code eingeben.
 6. Den Anweisungen des Helfers folgen. Er installiert, was auf dem PC fehlt, und zeigt dir jeden Knopf, den du
    tippen musst. Mit deiner **Apple-ID** meldest du dich nur im Programm **iloader** an, das der Helfer öffnet –

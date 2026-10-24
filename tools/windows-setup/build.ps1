@@ -11,11 +11,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-if (-not (Get-Module -ListAvailable -Name ps2exe)) {
-    Write-Output 'ps2exe wird installiert …'
-    Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
+# Feste Version (zuletzt erfolgreich im CI gebaut), damit ein neues ps2exe den Build nicht unbemerkt ändert.
+$ps2exeVersion = '1.0.18'
+if (-not (Get-Module -ListAvailable -Name ps2exe | Where-Object { $_.Version -eq [version]$ps2exeVersion })) {
+    Write-Output "ps2exe $ps2exeVersion wird installiert …"
+    Install-Module ps2exe -RequiredVersion $ps2exeVersion -Scope CurrentUser -Force -AllowClobber
 }
-Import-Module ps2exe
+Import-Module ps2exe -RequiredVersion $ps2exeVersion
 
 $source = Join-Path $PSScriptRoot 'WhoopPlusSetup.ps1'
 $icon = Join-Path $PSScriptRoot 'icon.ico'
