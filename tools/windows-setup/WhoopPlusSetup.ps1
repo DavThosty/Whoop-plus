@@ -40,6 +40,8 @@ $script:Config = @{
     RefreshHelpUrl       = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/ANLEITUNG.md#4-nie-mehr-dran-denken-automatisch-verl%C3%A4ngern'
     GuideUrl             = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/ANLEITUNG.md'
     ITunesDownloadUrl    = 'https://www.apple.com/itunes/download/win64'
+    SideStoreIssue80045  = 'https://github.com/SideStore/SideStore/issues/1675'
+    ILoaderIssue80045    = 'https://github.com/nab138/iloader/issues/965'
     ITunesWingetId       = 'Apple.iTunes'
     UsbmuxPort           = 27015
     UserAgent            = 'WhoopPlusSetup'
@@ -278,13 +280,21 @@ function Get-WingetArguments {
 }
 
 function Get-WingetResultKind {
+    # winget-Rückgabewerte (APPINSTALLER_CLI_ERROR_*) und durchgereichte Installer-Codes.
     param([int]$ExitCode)
     switch ($ExitCode) {
         0 { return 'Success' }
-        -1978335189 { return 'AlreadyInstalled' }   # 0x8A15002B: kein Update nötig
-        -1978335135 { return 'AlreadyInstalled' }   # 0x8A150061: schon installiert
-        -1978335212 { return 'NotFound' }           # 0x8A150014: Paket nicht gefunden
-        -1978335215 { return 'HashMismatch' }       # 0x8A150011: INSTALLER_HASH_MISMATCH (Download beschädigt)
+        -1978335189 { return 'AlreadyInstalled' }        # 0x8A15002B: kein Update nötig
+        -1978335135 { return 'AlreadyInstalled' }        # 0x8A150061: schon installiert
+        -1978334963 { return 'AlreadyInstalled' }        # 0x8A15010D: INSTALL_ALREADY_INSTALLED
+        -1978335212 { return 'NotFound' }                # 0x8A150014: Paket nicht gefunden
+        -1978335215 { return 'HashMismatch' }            # 0x8A150011: INSTALLER_HASH_MISMATCH (Download beschädigt)
+        -1978334967 { return 'SuccessRebootRequired' }   # 0x8A150109: Neustart nötig, um fertig zu werden
+        -1978334966 { return 'SuccessRebootRequired' }   # 0x8A15010A: Neustart für die Installation nötig
+        -1978334965 { return 'SuccessRebootRequired' }   # 0x8A15010B: Neustart wurde angestoßen
+        -1978334964 { return 'Cancelled' }               # 0x8A15010C: vom Benutzer abgebrochen
+        1602 { return 'Cancelled' }                      # Installer: vom Benutzer abgebrochen
+        1223 { return 'Cancelled' }                      # Windows-Abfrage mit „Nein“ beantwortet
         default { return 'Failed' }
     }
 }
@@ -348,11 +358,14 @@ function ConvertTo-SetupState {
         LastMode      = $null
         ResumeStep    = $null
         ResumeMode    = $null
+        RepairAttempts = 0
     }
     foreach ($key in @('VpnDone', 'TrustDone', 'DevModeDone', 'SideStoreDone', 'SourceDone')) {
         $value = Get-PropValue $InputObject $key
         if ($value -is [bool]) { $state[$key] = $value }
     }
+    $attempts = Get-PropValue $InputObject 'RepairAttempts'
+    if ($attempts -is [int] -or $attempts -is [long]) { $state.RepairAttempts = [int]$attempts }
     foreach ($key in @('CompletedAt', 'LastMode', 'ResumeStep', 'ResumeMode')) {
         $value = Get-PropValue $InputObject $key
         if ($value) { $state[$key] = [string]$value }
@@ -569,21 +582,23 @@ function Get-AppleStoreAppLabel {
 function Get-AppleSoftwareDiagnosis {
     # Bewertet die gefundenen Apple-Programme. $Facts kommt aus Get-AppleSoftwareFacts (im Test: von Hand gebaut).
     #   Ok | Missing | Conflict | ServiceStopped | Broken
-    # Nur iTunes von Apple wird unterstützt. Store-Apps „Apple-Geräte“, Apple Music, Apple TV übernehmen das iPhone
-    # bzw. sperren iTunes – und beim Entfernen nehmen sie Teile von iTunes mit (danach iTunes reparieren).
+    # Nur iTunes von Apple wird unterstützt. Die Store-App „Apple-Geräte“ übernimmt das iPhone – und beim Entfernen
+    # nimmt sie Teile von iTunes mit (danach iTunes reparieren).
     param($Facts)
     $store = @(Get-PropValue $Facts 'StoreApps' | Where-Object { $null -ne $_ })
     $kinds = @($store | ForEach-Object { [string](Get-PropValue $_ 'Kind') })
     $hasITunesDesktop = [bool](Get-PropValue $Facts 'ITunesVersion') -or [bool](Get-PropValue $Facts 'AmdsVersion')
     $hasITunesStore = $kinds -contains 'iTunesStore'
-    $blockers = @($store | Where-Object { @('AppleDevices', 'AppleMusic', 'AppleTV') -contains [string](Get-PropValue $_ 'Kind') })
+    # Nur „Apple-Geräte“ greift in Apple Mobile Device Support ein (Apple Music/TV nicht) – und es ist nur dann
+    # ein Problem, wenn der Dienst nicht läuft oder usbmuxd nicht antwortet.
+    $blockers = @($store | Where-Object { [string](Get-PropValue $_ 'Kind') -eq 'AppleDevices' })
     $serviceExists = [bool](Get-PropValue $Facts 'ServiceExists')
     $serviceRunning = ([string](Get-PropValue $Facts 'ServiceStatus') -eq 'Running')
+    $usbmuxOk = [bool](Get-PropValue $Facts 'UsbmuxReachable')
     $result = { param($status, $message, $action) [pscustomobject]@{ Status = $status; Message = $message; Action = $action; Conflicts = $blockers } }
 
-    if ($blockers.Count -gt 0) {
-        $names = ($blockers | ForEach-Object { Get-AppleStoreAppLabel ([string](Get-PropValue $_ 'Kind')) }) -join ', '
-        return (& $result 'Conflict' "Die App $names stört iTunes." 'Ich entferne sie, repariere iTunes und starte den PC neu.')
+    if ($blockers.Count -gt 0 -and -not ($serviceRunning -and $usbmuxOk)) {
+        return (& $result 'Conflict' 'Die App Apple-Geräte stört iTunes.' 'Ich entferne sie, repariere iTunes und starte den PC neu.')
     }
     if ($serviceExists -and $serviceRunning) { return (& $result 'Ok' 'Das Apple-Programm ist da.' '') }
     if ($serviceExists) {
@@ -614,14 +629,34 @@ function Test-AppleDownloadUrl {
 }
 
 function Get-NextInstallStep {
-    # Nach einem winget-Lauf: Verify = erfolgreich, NICHT den nächsten Weg probieren; Next = nächster Weg; Problem = abbrechen.
-    param([string]$Kind)
+    # Nach einem winget-Lauf:
+    #   Verify = erfolgreich (NICHT den nächsten Weg probieren), VerifyReboot = erfolgreich, Neustart nötig,
+    #   Stop = abgebrochen (kein zweiter Versuch), Problem = Download beschädigt, Next = nächster Weg.
+    # Bei -Repair zählt „schon installiert“ NICHT als erledigt (dann Apples Installationsprogramm direkt).
+    param([string]$Kind, [switch]$Repair)
     switch ($Kind) {
         'Success' { return 'Verify' }
-        'AlreadyInstalled' { return 'Verify' }
+        'SuccessRebootRequired' { return 'VerifyReboot' }
+        'AlreadyInstalled' { if ($Repair) { return 'Next' } return 'Verify' }
+        'Cancelled' { return 'Stop' }
         'HashMismatch' { return 'Problem' }
         default { return 'Next' }
     }
+}
+
+function Get-RepairOutcome {
+    # Nach einer iTunes-Reparatur: Neustart nur anbieten, wenn sich etwas geändert hat;
+    # ab dem 2. erfolglosen Versuch die Schritte von Hand zeigen statt im Kreis zu reparieren.
+    param([string]$StatusBefore, [string]$StatusAfter, [int]$FailedAttempts)
+    if ($StatusAfter -ne $StatusBefore -or $StatusAfter -eq 'Ok') { return 'RebootOffer' }
+    if ($FailedAttempts -ge 2) { return 'Manual' }
+    return 'Retry'
+}
+
+function Test-PnputilSuccess {
+    # pnputil: 0 = ok, 3010 = ok (Neustart empfohlen), 259 = nichts zu tun (Treiber schon aktuell).
+    param([string]$ExitCode)
+    return ($ExitCode -in @('0', '3010', '259'))
 }
 
 function ConvertTo-SafeDeviceId {
@@ -643,7 +678,7 @@ function Test-IsAppleDriver {
 
 function Get-ConnectDiagnosis {
     # Warum findet iloader das iPhone nicht? $Facts kommt aus Get-ConnectFacts (im Test: von Hand gebaut).
-    #   Ok | AppleSoftware | NoDevice | NeedsRestart | ServiceNotRunning | ServiceBroken | DriverMissing | NotTrusted
+    #   Ok | AppleSoftware | NoDevice | NeedsRestart | ServiceNotRunning | ServiceBroken | DriverMissing | Replug
     param($Facts, [switch]$FreshInstall)
     $result = { param($kind, $text, $action, $buttonText, $buttonAction)
         [pscustomobject]@{ Kind = $kind; Text = $text; Action = $action; ButtonText = $buttonText; ButtonAction = $buttonAction } }
@@ -679,10 +714,10 @@ function Get-ConnectDiagnosis {
         return (& $result 'DriverMissing' 'Der PC sieht dein iPhone, aber ihm fehlt das Apple-Teil für die Kabelverbindung.' `
                 'Klicke auf **Reparieren** und bei Windows auf **Ja**. Danach das Kabel kurz abziehen und wieder anstecken.' 'Reparieren' 'InstallAppleDriver')
     }
-    return (& $result 'NotTrusted' 'Der PC sieht dein iPhone, aber das iPhone erlaubt die Verbindung noch nicht.' `
-        ('1. iPhone entsperren und bei „Diesem Computer vertrauen?“ auf **Vertrauen** tippen.' + "`n" +
-            '2. Kommt die Frage nie: Kabel ab, am iPhone **Einstellungen** → **Allgemein** → **iPhone übertragen/zurücksetzen** → ' +
-            '**Zurücksetzen** → **Standort & Datenschutz**, dann wieder anstecken.') $null $null)
+    # usbmuxd meldet auch iPhones ohne „Vertrauen“ – hier hilft meist: entsperren, neu anstecken, sonst neu starten.
+    return (& $result 'Replug' 'Der PC sieht dein iPhone, aber die Verbindung klappt noch nicht.' `
+        ('1. iPhone entsperren.' + "`n" + '2. Kabel abziehen und wieder anstecken.' + "`n" + '3. Hilft das nicht: PC neu starten.') `
+        'PC jetzt neu starten' 'Restart')
 }
 
 function New-ServiceStartArguments {
@@ -716,7 +751,8 @@ function Format-DiagnosticsReport {
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add('--- Apple-Programme ---')
     $lines.Add(('iTunes: {0} | Apple Mobile Device Support: {1}' -f (Get-PropValue $AppleFacts 'ITunesVersion'), (Get-PropValue $AppleFacts 'AmdsVersion')))
-    $lines.Add(('Dienst: vorhanden={0} Status={1} Start={2}' -f (Get-PropValue $AppleFacts 'ServiceExists'), (Get-PropValue $AppleFacts 'ServiceStatus'), (Get-PropValue $AppleFacts 'ServiceStartType')))
+    $lines.Add(('Dienst: vorhanden={0} Status={1} Start={2} | usbmuxd antwortet: {3}' -f (Get-PropValue $AppleFacts 'ServiceExists'), (Get-PropValue $AppleFacts 'ServiceStatus'),
+            (Get-PropValue $AppleFacts 'ServiceStartType'), (Get-PropValue $AppleFacts 'UsbmuxReachable')))
     foreach ($app in @(Get-PropValue $AppleFacts 'StoreApps' | Where-Object { $null -ne $_ })) {
         $lines.Add(('Store-App: {0} {1} ({2})' -f (Get-PropValue $app 'Name'), (Get-PropValue $app 'Version'), (Get-PropValue $app 'Kind')))
     }
@@ -779,11 +815,42 @@ function Get-ScreenDefinition {
         }
         'AppleConflict' {
             $d.Title = 'Zwei Apple-Programme stören sich'; $d.Icon = 'step-warn'; $d.OnEnter = 'ShowConflicts'
-            $d.Body = "Auf deinem PC sind Apps aus dem Microsoft Store, die iTunes stören (z. B. **Apple-Geräte**). Dann findet der PC das iPhone nicht.`nIch entferne sie, repariere iTunes und starte den PC einmal neu."
+            $d.Body = "Auf deinem PC ist die App **Apple-Geräte** aus dem Microsoft Store. Sie stört iTunes, dann findet der PC das iPhone nicht.`nIch entferne sie, repariere iTunes und starte den PC einmal neu."
             $d.Primary = 'Reparieren'; $d.PrimaryAction = 'RemoveConflicts'
             $d.Secondary = @(
                 @{ Text = 'Selbst entfernen'; Action = 'OpenUrl:ms-settings:appsfeatures' },
+                @{ Text = 'Nochmal prüfen'; Action = 'Goto:AppleSoftware' },
+                @{ Text = 'Trotzdem weiter'; Action = 'Next' }
+            )
+        }
+        'ConnectUnresolved' {
+            $d.Title = 'Noch nicht gelöst'; $d.Icon = 'step-warn'
+            $d.Body = "Der PC findet dein iPhone noch nicht.`nKlicke auf **Hilfe** und schicke den Bericht an die Person, die dir hilft."
+            $d.Primary = 'Schließen'; $d.PrimaryAction = 'Quit'
+        }
+        'AppleManualRepair' {
+            $d.Title = 'iTunes von Hand neu einrichten'; $d.Icon = 'step-repair'
+            $d.Body = "Die automatische Reparatur hat zweimal nicht geholfen. So geht es von Hand:`n" +
+                "1. **Apps öffnen** und entfernen (falls da): **iTunes**, **Apple Mobile Device Support**, **Apple Software Update**, **Bonjour**, **Apple Application Support**.`n" +
+                "2. PC neu starten.`n3. **iTunes laden** (von apple.com) und installieren.`n4. PC neu starten und diesen Helfer wieder öffnen."
+            $d.Primary = 'Apps öffnen'; $d.PrimaryAction = 'OpenUrl:ms-settings:appsfeatures'
+            $d.Secondary = @(
+                @{ Text = 'iTunes laden'; Action = 'OpenUrl:' + $script:Config.ITunesDownloadUrl },
                 @{ Text = 'Nochmal prüfen'; Action = 'Goto:AppleSoftware' }
+            )
+        }
+        'SignIn80045' {
+            $d.Title = 'Anmeldefehler -80045'; $d.Icon = 'step-warn'
+            $d.Body = "Apple blockiert seit Mitte Oktober 2026 manche Anmeldungen. Das hilft oft (vorübergehende Lösung):`n" +
+                "1. In SideStore **Settings** → **User Customizations**: **On-Device Anisette** ausschalten, Neustart bestätigen.`n" +
+                "2. **Anisette Servers**: **SideStore (New)** wählen, nach unten scrollen, **Enable auto rotation** ausschalten.`n" +
+                "3. **User Customizations** → **Anisette client configuration** → **Remote server sync**: **Fetch**, dann **Save as overrides**.`n" +
+                "4. **User Customizations** → **Reset adi.pb** tippen.`n" +
+                '5. SideStore ganz schließen und neu anmelden (das dauert etwas).'
+            $d.Note = 'Kommt **502**, ist der Server gerade voll – später nochmal versuchen. Das klappt leider nicht bei jedem Konto.'
+            $d.Links = @(
+                @{ Text = 'Mehr dazu bei SideStore (englisch)'; Action = 'OpenUrl:' + $script:Config.SideStoreIssue80045 },
+                @{ Text = 'Hinweis bei iloader (englisch)'; Action = 'OpenUrl:' + $script:Config.ILoaderIssue80045 }
             )
         }
         'ConnectDone' {
@@ -844,7 +911,10 @@ function Get-ScreenDefinition {
         'SideStoreOpen' {
             $d.Title = 'SideStore öffnen'; $d.Icon = 'step-refresh'
             $d.Body = "1. Öffne **LocalDevVPN** und tippe auf **Connect**.`n2. Öffne **SideStore** und melde dich mit **derselben Apple-ID** an wie in iloader."
-            $d.Secondary = @(@{ Text = 'SideStore öffnet nicht'; Action = 'SideStoreNotOpening' })
+            $d.Secondary = @(
+                @{ Text = 'SideStore öffnet nicht'; Action = 'SideStoreNotOpening' },
+                @{ Text = 'Fehler -80045?'; Action = 'SignInHelp' }
+            )
         }
         'SideStoreRefresh' {
             $d.Title = 'SideStore einmal verlängern'; $d.Icon = 'step-refresh'
@@ -1172,6 +1242,22 @@ function Get-UsbmuxDevices {
     finally { $client.Close() }
 }
 
+function Get-UsbmuxDeviceListWithRetry {
+    # Fragt usbmuxd bis zu $Attempts-mal (der Dienst antwortet kurz nach dem Start manchmal noch nicht).
+    # Ergebnis: Reachable + Geräte (USB). Wirft nicht.
+    param([int]$Attempts = 3, [int]$DelayMs = 500)
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            $devices = @(Get-UsbmuxDevices | Where-Object { $_.ConnectionType -eq 'USB' })
+            return [pscustomobject]@{ Reachable = $true; Devices = $devices }
+        }
+        catch {
+            if ($i -lt $Attempts) { Start-Sleep -Milliseconds $DelayMs }
+        }
+    }
+    return [pscustomobject]@{ Reachable = $false; Devices = @() }
+}
+
 function Get-AppleSoftwareFacts {
     # Was ist an Apple-Software da? (iTunes/Apple Mobile Device Support, Dienst, Store-Apps des Benutzers)
     $entries = @(Get-UninstallEntries)
@@ -1195,7 +1281,9 @@ function Get-AppleSoftwareFacts {
         $status = [string]$service.Status
         try { $startType = [string]$service.StartType } catch { $startType = '' }
     }
+    $usbmux = Get-UsbmuxDeviceListWithRetry -Attempts 2 -DelayMs 300
     return [pscustomobject]@{
+        UsbmuxReachable  = $usbmux.Reachable
         ITunesVersion    = [string](Get-PropValue $itunes 'DisplayVersion')
         AmdsVersion      = [string](Get-PropValue $amds 'DisplayVersion')
         ServiceExists    = ($null -ne $service)
@@ -1254,12 +1342,10 @@ function Get-ApplePnpDevices {
 
 function Get-ConnectFacts {
     # Alles, was Get-ConnectDiagnosis braucht (läuft im Hintergrund, kann ein paar Sekunden dauern).
-    $reachable = $false; $count = 0
-    try {
-        $count = @(Get-UsbmuxDevices | Where-Object { $_.ConnectionType -eq 'USB' }).Count
-        $reachable = $true
-    }
-    catch { $null = $_ }
+    # usbmuxd 3× fragen, bevor er als „antwortet nicht“ gilt.
+    $usbmux = Get-UsbmuxDeviceListWithRetry -Attempts 3 -DelayMs 500
+    $reachable = $usbmux.Reachable
+    $count = @($usbmux.Devices).Count
     $pnp = @()
     try { $pnp = @(Get-ApplePnpDevices) } catch { $null = $_ }
     $inf = Get-AppleDriverInfPath
@@ -1363,7 +1449,7 @@ $script:CheckFunctions = @(
     'Get-UsbmuxDevices', 'Test-IPhoneConnected', 'Get-UninstallEntries', 'Test-AppleSoftware', 'Find-ILoaderInstall',
     'Get-ILoaderCandidatePaths', 'Get-InstalledILoader', 'Get-AppleStoreAppKind', 'Get-AppleStoreAppLabel',
     'Get-AppleSoftwareFacts', 'Get-AppleSoftwareDiagnosis', 'ConvertTo-SafeDeviceId', 'Get-ApplePnpDevices',
-    'Get-AppleDriverInfPath', 'Get-ConnectFacts'
+    'Get-AppleDriverInfPath', 'Get-ConnectFacts', 'Get-UsbmuxDeviceListWithRetry'
 )
 $script:CheckRunspace = $null
 $script:CheckRunspaceBusy = $false
@@ -2233,6 +2319,7 @@ function Show-StartScreen {
         $script:State.ResumeStep = $null
         $script:State.ResumeMode = $null
         Save-SetupState $script:State
+        Unregister-ResumeAfterRestart
         if ($mode -in $script:Modes) {
             Write-SetupLog "Weiter nach dem Neustart: $mode / $step"
             Start-Mode $mode -ResumeAt $step
@@ -2286,6 +2373,16 @@ function Invoke-UiAction {
             'RemoveConflicts' { Remove-AppleConflictsUi }
             'ShowConflicts' { Show-AppleConflicts }
             'StartAppleService' { Start-AppleServiceUi }
+            'SkipConnect' {
+                # Ohne erkanntes iPhone weiter – im Modus „nicht erkannt“ nicht „gefunden“ melden.
+                $next = $script:Index + 1
+                if ($next -lt $script:Plan.Count -and $script:Plan[$next] -eq 'ConnectDone') { $script:Plan[$next] = 'ConnectUnresolved' }
+                Move-Next
+            }
+            'SignInHelp' {
+                $script:Plan = Add-PlanStepsBefore -Plan $script:Plan -Index $script:Index -Steps @('SignIn80045')
+                Enter-Screen $script:Index
+            }
             'InstallAppleDriver' { Install-AppleDriverUi }
             'Restart' {
                 $step = $arg
@@ -2429,6 +2526,7 @@ function Show-AppleSoftwareResult {
     switch ($Apple.Status) {
         'Ok' {
             $script:AppleConflicts = @()
+            if ([int]$script:State.RepairAttempts -ne 0) { $script:State.RepairAttempts = 0; Save-SetupState $script:State }
             if ($AfterInstall) { Complete-AutoStep 'Das Apple-Programm ist installiert.' }
             else { Complete-AutoStep 'Das Apple-Programm ist schon da.' }
         }
@@ -2517,11 +2615,10 @@ function Install-ITunesDirect {
         return 'Untrusted'
     }
     Move-Item -LiteralPath $partial -Destination $target -Force
-    $sig = Get-AuthenticodeSignature -FilePath $target
-    $subject = ''
-    if ($null -ne $sig.SignerCertificate) { $subject = [string]$sig.SignerCertificate.Subject }
-    Write-SetupLog "iTunes-Installationsprogramm: $($progress.FinalUrl), Signatur $($sig.Status) ($subject)"
-    if (-not (Test-AppleAuthenticode -Status ([string]$sig.Status) -Subject $subject)) {
+    Set-Status 'busy' 'Ich prüfe die Datei von Apple …'
+    $sig = Invoke-InBackground -ScriptBlock $script:AuthenticodeScript -ArgumentList @($target)
+    Write-SetupLog "iTunes-Installationsprogramm: $($progress.FinalUrl), Signatur $($sig.Status) ($($sig.Subject))"
+    if (-not (Test-AppleAuthenticode -Status ([string]$sig.Status) -Subject ([string]$sig.Subject))) {
         Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
         return 'Untrusted'
     }
@@ -2531,6 +2628,16 @@ function Install-ITunesDirect {
     if ($result -in @('Cancelled', 'Failed', 'Unknown')) { return $result }
     if ((Get-MsiResultKind ([int]$result)) -eq 'Success') { return 'Success' }
     return 'Failed'
+}
+
+$script:AuthenticodeScript = {
+    # Authenticode-Signatur einer Datei (läuft im Hintergrund, kann bei großen Dateien dauern).
+    param([string]$Path)
+    $ErrorActionPreference = 'Stop'
+    $sig = Get-AuthenticodeSignature -LiteralPath $Path
+    $subject = ''
+    if ($null -ne $sig.SignerCertificate) { $subject = [string]$sig.SignerCertificate.Subject }
+    [pscustomobject]@{ Status = [string]$sig.Status; Subject = $subject }
 }
 
 function Invoke-ITunesInstall {
@@ -2546,8 +2653,10 @@ function Invoke-ITunesInstall {
         if ($script:Closing) { return 'Failed' }
         if ($method -eq 'ITunesWinget') {
             Set-Status 'busy' "iTunes wird $verb …`nDas kann ein paar Minuten dauern. Fragt Windows `„Möchten Sie zulassen …`“? Dann auf **Ja** klicken."
-            $step = Get-NextInstallStep (Invoke-ITunesWinget -Winget $winget -Repair:$Repair)
+            $step = Get-NextInstallStep (Invoke-ITunesWinget -Winget $winget -Repair:$Repair) -Repair:$Repair
             if ($step -eq 'Verify') { return 'Success' }
+            if ($step -eq 'VerifyReboot') { return 'SuccessReboot' }
+            if ($step -eq 'Stop') { return 'Cancelled' }
             if ($step -eq 'Problem') { return 'HashMismatch' }
         }
         elseif ($method -eq 'ITunesDirect') {
@@ -2563,6 +2672,7 @@ function Install-AppleSoftwareUi {
     $kind = Invoke-ITunesInstall
     switch ($kind) {
         'Success' { Complete-AppleInstall }
+        'SuccessReboot' { Show-RebootOffer -Text 'iTunes ist installiert. Windows braucht jetzt einen Neustart.' -ResumeStep 'AppleSoftware' }
         'HashMismatch' { Show-Problem -Text 'Download beschädigt.' -Action 'Bitte klicke auf **Nochmal versuchen**.' }
         'Cancelled' { Show-Problem -Text 'Die Installation wurde abgebrochen.' -Action 'Klicke auf **Nochmal versuchen** und dann bei Windows auf **Ja**.' }
         default {
@@ -2573,23 +2683,56 @@ function Install-AppleSoftwareUi {
     }
 }
 
+function Show-RebootOffer {
+    # Neustart anbieten (mit Weitermachen danach) – plus „Ohne Neustart weiter“.
+    param([string]$Text, [string]$ResumeStep)
+    if (-not $ResumeStep) { $ResumeStep = $script:CurrentId }
+    if ($ResumeStep -eq 'AppleSoftware' -and $script:Plan -notcontains 'AppleSoftware') { $ResumeStep = $script:CurrentId }
+    Set-Busy $false
+    Set-Status 'ok' ($Text + "`n" + 'Speichere vorher alles, was offen ist. Danach öffnet sich dieser Helfer von selbst und macht weiter.')
+    Set-PrimaryButton 'PC jetzt neu starten' ('Restart:' + $ResumeStep)
+    Set-SecondaryButtons @(@{ Text = 'Ohne Neustart weiter'; Action = 'Retry' })
+}
+
 function Repair-AppleSoftwareUi {
-    # iTunes neu installieren (repariert Apple Mobile Device Support), danach Neustart mit Weitermachen.
+    # iTunes neu installieren (repariert Apple Mobile Device Support). Neustart nur, wenn sich etwas geändert hat;
+    # nach dem 2. erfolglosen Versuch die Schritte von Hand zeigen statt im Kreis zu reparieren.
     Set-Busy $true
+    $before = Invoke-Check 'Test-AppleSoftware'
     $kind = Invoke-ITunesInstall -Repair
-    Write-SetupLog "iTunes-Reparatur: $kind"
-    if ($kind -ne 'Success') {
-        Show-Problem -Text 'Die Reparatur hat nicht geklappt.' -Action 'Klicke auf **Nochmal versuchen**. Hilft das nicht: iTunes von Apple selbst laden und installieren.'
+    Write-SetupLog "iTunes-Reparatur: $kind (vorher $($before.Status), bisherige Fehlversuche $($script:State.RepairAttempts))"
+    if ($kind -eq 'Cancelled') {
+        Show-Problem -Text 'Die Reparatur wurde abgebrochen.' -Action 'Klicke auf **Nochmal versuchen** und dann bei Windows auf **Ja**.'
         Set-PrimaryButton 'Nochmal versuchen' 'RepairApple'
-        Set-SecondaryButtons @(@{ Text = 'iTunes-Seite öffnen'; Action = 'OpenUrl:' + $script:Config.ITunesDownloadUrl })
         return
     }
-    $resume = $script:CurrentId
-    if ($script:Plan -contains 'AppleSoftware') { $resume = 'AppleSoftware' }
-    Set-Busy $false
-    Set-Status 'ok' "iTunes ist repariert. Jetzt muss der PC einmal neu starten.`nDanach öffnet sich dieser Helfer von selbst und macht weiter."
-    Set-PrimaryButton 'PC jetzt neu starten' ('Restart:' + $resume)
-    Set-SecondaryButtons @()
+    if ($kind -eq 'SuccessReboot') {
+        Show-RebootOffer -Text 'iTunes ist repariert. Windows braucht jetzt einen Neustart.' -ResumeStep 'AppleSoftware'
+        return
+    }
+    $after = $before
+    if ($kind -eq 'Success') {
+        Set-Status 'busy' 'Ich warte, bis iTunes bereit ist (bis zu 1 Minute) …'
+        $after = Wait-AppleReady -TimeoutMs 60000
+    }
+    $failed = [int]$script:State.RepairAttempts
+    if ($kind -ne 'Success' -or $after.Status -eq $before.Status) { $failed++ }
+    $outcome = Get-RepairOutcome -StatusBefore ([string]$before.Status) -StatusAfter ([string]$after.Status) -FailedAttempts $failed
+    if ($kind -ne 'Success' -and $outcome -eq 'RebootOffer') { $outcome = 'Retry' }
+    $script:State.RepairAttempts = $failed
+    Save-SetupState $script:State
+    Write-SetupLog "Nach der Reparatur: $($after.Status) -> $outcome"
+    switch ($outcome) {
+        'RebootOffer' { Show-RebootOffer -Text 'iTunes ist repariert. Jetzt sollte der PC einmal neu starten.' -ResumeStep 'AppleSoftware' }
+        'Manual' {
+            $script:Plan = Add-PlanStepsBefore -Plan $script:Plan -Index ($script:Index + 1) -Steps @('AppleManualRepair')
+            Move-Next
+        }
+        default {
+            Show-Problem -Text 'Die Reparatur hat nichts geändert.' -Action 'Klicke auf **Nochmal versuchen**.'
+            Set-PrimaryButton 'Nochmal versuchen' 'RepairApple'
+        }
+    }
 }
 
 function Complete-AppleInstall {
@@ -2754,29 +2897,48 @@ function Install-AppleDriverUi {
         Set-PrimaryButton 'Nochmal versuchen' 'InstallAppleDriver'
         return
     }
+    if (-not (Test-PnputilSuccess $result)) {
+        Show-Problem -Text 'Die Kabelverbindung ließ sich nicht einrichten.' -Action 'Klicke auf **Apple-Programm reparieren**. Ich installiere iTunes dann neu.'
+        Set-PrimaryButton 'Apple-Programm reparieren' 'RepairApple'
+        return
+    }
     $script:ConnectNote = 'Fertig. Zieh das Kabel jetzt kurz ab und steck es wieder an. Klappt es danach nicht: PC neu starten.'
     Enter-Screen $script:Index
 }
 
+$script:RunOnceKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+$script:RunOnceName = 'WhoopPlusSetup'
+
 function Register-ResumeAfterRestart {
     # Öffnet den Helfer nach dem Neustart einmal von selbst (HKCU\...\RunOnce, ohne Administrator).
+    # Die .exe wird vorher nach %LOCALAPPDATA%\WhoopPlusSetup kopiert (der Download-Ordner kann sich ändern).
     try {
         $exe = $null; $scriptPath = $null
-        if (Test-IsCompiledHost) { $exe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
+        if (Test-IsCompiledHost) {
+            $current = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            $exe = Join-Path (Get-AppDataDir) 'WhoopPlus-Setup.exe'
+            if ($current -ne $exe) { Copy-Item -LiteralPath $current -Destination $exe -Force }
+        }
         else { $scriptPath = $script:ScriptPath }
         $command = New-RunOnceCommand -ExePath $exe -ScriptPath $scriptPath
         if (-not $command) { return }
-        $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
-        if (-not (Test-Path -LiteralPath $key)) { $null = New-Item -Path $key -Force }
-        Set-ItemProperty -LiteralPath $key -Name 'WhoopPlusSetup' -Value $command
+        if (-not (Test-Path -LiteralPath $script:RunOnceKey)) { $null = New-Item -Path $script:RunOnceKey -Force }
+        Set-ItemProperty -LiteralPath $script:RunOnceKey -Name $script:RunOnceName -Value $command
         Write-SetupLog "Nach dem Neustart: $command"
     }
     catch { Write-SetupLog "Autostart nach Neustart nicht eingetragen: $($_.Exception.Message)" 'WARN' }
 }
 
+function Unregister-ResumeAfterRestart {
+    # Eintrag wieder löschen (beim Weitermachen nach dem Neustart oder wenn der Neustart nicht klappt).
+    try { Remove-ItemProperty -LiteralPath $script:RunOnceKey -Name $script:RunOnceName -ErrorAction Stop }
+    catch { $null = $_ }
+}
+
 function Request-PcRestart {
     param([string]$ResumeStep)
-    $ok = Confirm-Action ("Der PC startet jetzt neu.`n`nBitte speichere vorher alles, was noch offen ist.`n" +
+    $ok = Confirm-Action ("Der PC startet jetzt neu.`n`nBitte speichere vorher alles, was noch offen ist. " +
+        "Programme mit ungespeicherten Änderungen fragen dich eventuell noch.`n`n" +
         'Danach öffnet sich dieser Helfer von selbst und macht weiter.')
     if (-not $ok) {
         Set-Status 'info' 'Kein Problem. Starte den PC später neu und öffne dann diesen Helfer wieder.'
@@ -2787,10 +2949,20 @@ function Request-PcRestart {
     Save-SetupState $script:State
     Register-ResumeAfterRestart
     Write-SetupLog "Neustart, danach weiter bei $($script:Mode)/$ResumeStep"
-    try { Start-Process -FilePath (Get-SystemToolPath 'shutdown.exe') -ArgumentList '/r /t 5 /c "Whoop Plus Einrichtungshelfer: Neustart"' -WindowStyle Hidden }
-    catch {
-        Write-SetupLog "Neustart fehlgeschlagen: $($_.Exception.Message)" 'ERROR'
-        Show-Problem -Text 'Der Neustart hat nicht geklappt.' -Action 'Bitte starte den PC selbst neu (Start → Ein/Aus → Neu starten).'
+    # /t 0 ohne /f: offene Programme dürfen nach dem Speichern fragen (eine Wartezeit > 0 würde /f erzwingen).
+    $code = $null
+    try {
+        $p = Start-Process -FilePath (Get-SystemToolPath 'shutdown.exe') -ArgumentList '/r /t 0' -WindowStyle Hidden -PassThru -Wait
+        $code = $p.ExitCode
+    }
+    catch { Write-SetupLog "Neustart fehlgeschlagen: $($_.Exception.Message)" 'ERROR' }
+    if ($code -ne 0) {
+        Write-SetupLog "shutdown.exe: $code" 'ERROR'
+        Unregister-ResumeAfterRestart
+        $script:State.ResumeStep = $null
+        $script:State.ResumeMode = $null
+        Save-SetupState $script:State
+        Show-Problem -Text 'Der Neustart hat nicht geklappt.' -Action 'Bitte starte den PC selbst neu (Start → Ein/Aus → Neu starten) und öffne dann diesen Helfer wieder.'
         return
     }
     $script:Ui.Form.Close()
@@ -2848,7 +3020,7 @@ function Invoke-AutoConnect {
             $script:ConnectHintShown = $true
             Write-SetupLog 'iPhone nach 45 s nicht erkannt' 'WARN'
             Set-RichText $script:Ui.Note 'Klappt es nicht? Probiere ein anderes Kabel oder einen anderen USB-Anschluss. Das iPhone muss entsperrt sein.'
-            Set-SecondaryButtons @(@{ Text = 'Trotzdem weiter'; Action = 'Next' })
+            Set-SecondaryButtons @(@{ Text = 'Trotzdem weiter'; Action = 'SkipConnect' })
             Update-UiWidths
         }
     }
@@ -2868,7 +3040,7 @@ function Show-ConnectDiagnosis {
     $action = $diag.ButtonAction
     if ($action -eq 'Restart') { $action = 'Restart:Connect' }
     Set-PrimaryButton $diag.ButtonText $action
-    Set-SecondaryButtons @(@{ Text = 'Nochmal prüfen'; Action = 'Retry' }, @{ Text = 'Trotzdem weiter'; Action = 'Next' })
+    Set-SecondaryButtons @(@{ Text = 'Nochmal prüfen'; Action = 'Retry' }, @{ Text = 'Trotzdem weiter'; Action = 'SkipConnect' })
 }
 
 function Get-DownloadDir {
@@ -3023,8 +3195,25 @@ function Install-ILoaderPackage {
     try { return (Get-MsiResultKind $process.ExitCode) } catch { return 'Unknown' }
 }
 
+function Enter-SingleInstance {
+    # Nur ein Helfer gleichzeitig (benannter Mutex). Ergebnis: Mutex (behalten!) oder $null, wenn schon einer läuft.
+    param([string]$Name = 'Local\WhoopPlusSetup')
+    $mutex = New-Object System.Threading.Mutex -ArgumentList $false, $Name
+    $owned = $false
+    try { $owned = $mutex.WaitOne(0) }
+    catch [System.Threading.AbandonedMutexException] { $owned = $true }
+    if ($owned) { return $mutex }
+    $mutex.Dispose()
+    return $null
+}
+
 function Start-Gui {
     Initialize-UiAssemblies
+    $script:InstanceMutex = Enter-SingleInstance
+    if ($null -eq $script:InstanceMutex) {
+        $null = [System.Windows.Forms.MessageBox]::Show('Der Einrichtungshelfer ist schon geöffnet.', 'Whoop Plus Einrichtungshelfer', 'OK', 'Information')
+        return
+    }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $script:State = Read-SetupState
     Write-SetupLog ("Start {0}, gemerkt: {1}" -f $script:HelperVersion, (([pscustomobject]$script:State | ConvertTo-Json -Compress)))
@@ -3043,6 +3232,7 @@ function Start-Gui {
         Remove-PartialDownloads
         Close-CheckRunspace
         $form.Dispose()
+        try { $script:InstanceMutex.ReleaseMutex(); $script:InstanceMutex.Dispose() } catch { $null = $_ }
         Write-SetupLog 'Ende'
     }
 }

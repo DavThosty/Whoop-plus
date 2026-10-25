@@ -20,8 +20,8 @@ Das dauert etwa 20 Minuten.
 
 - Es prüft, ob dein Windows passt.
 - Es installiert das kostenlose **Apple-Programm** iTunes von Apple, damit der PC das iPhone erkennt.
-  Stören Store-Apps wie **Apple-Geräte**, Apple Music oder Apple TV, entfernt es sie nach Rückfrage, repariert iTunes
-  und startet den PC einmal neu (danach geht es von selbst weiter).
+  Stört die Store-App **Apple-Geräte**, entfernt es sie nach Rückfrage, repariert iTunes und startet den PC einmal neu
+  (danach geht es von selbst weiter). Hilft die Reparatur zweimal nicht, zeigt es die Schritte von Hand.
   Was schon da ist, wird übersprungen.
 - Es erkennt von selbst, wenn das iPhone per Kabel angeschlossen ist.
 - Es lädt das Programm **iloader** (bringt SideStore aufs iPhone), installiert es und hält es aktuell.
@@ -112,10 +112,16 @@ Hinweise:
   Installationsprogramm direkt von apple.com (Weiterleitung nur auf `*.apple.com`, Authenticode „Apple Inc.“ geprüft,
   `/quiet`), zuletzt die Apple-Seite im Browser. Nach einem Erfolg wird nie ein weiterer Weg installiert.
   Danach bis zu 60 s auf „Apple Mobile Device Service“ warten (gestoppt → mit Rückfrage starten, fehlt → Neustart).
-- Bewertung (`Get-AppleSoftwareDiagnosis`): Store-Apps „Apple-Geräte“/Apple Music/Apple TV → *Conflict* (entfernen,
-  iTunes mit `winget … --force` neu installieren, Neustart); iTunes ohne Apple Mobile Device Support/Dienst → *Broken*
-  (iTunes neu installieren, Neustart).
+- Bewertung (`Get-AppleSoftwareDiagnosis`): Store-App „Apple-Geräte“ → *Conflict*, aber nur wenn der Dienst nicht läuft
+  oder usbmuxd nicht antwortet (entfernen, iTunes neu installieren, Neustart; Apple Music/TV stören nicht);
+  iTunes ohne Apple Mobile Device Support/Dienst → *Broken* (iTunes neu installieren). Bei der Reparatur zählt winget
+  „schon installiert“ nicht – dann Apples Installationsprogramm direkt. Neustart nur, wenn sich etwas geändert hat;
+  Fehlversuche zählt `state.json` (`RepairAttempts`), ab dem 2. die Schritte von Hand.
 - Verbindung zählt nur, wenn usbmuxd das iPhone meldet. Sieht nur Windows es, sucht `Get-ConnectDiagnosis` die Ursache:
-  Dienst gestoppt (starten), Dienst antwortet nicht (iTunes reparieren), kein Apple-Treiber/Gerätefehler
-  (`pnputil /add-driver …\usbaapl64.inf /install`), sonst Vertrauen fehlt. Nach frischer Installation: nach ~30 s Neustart anbieten.
-- Neustart: `state.json` merkt Modus und Schritt, `HKCU\…\RunOnce` öffnet den Helfer danach einmal von selbst.
+  Dienst gestoppt (starten), Dienst antwortet nach 3 Versuchen nicht (iTunes reparieren), kein Apple-Treiber/Gerätefehler
+  (`pnputil /add-driver …\usbaapl64.inf /install`, Rückgabe 0/3010/259 = ok), sonst entsperren/neu anstecken/neu starten.
+  Nach frischer Installation: nach ~30 s Neustart anbieten.
+- Neustart mit `shutdown /r /t 0` (ohne `/f` – offene Programme dürfen nach dem Speichern fragen). `state.json` merkt Modus
+  und Schritt; die .exe wird nach `%LOCALAPPDATA%\WhoopPlusSetup` kopiert und per `HKCU\…\RunOnce` einmal gestartet
+  (Eintrag wird beim Weitermachen bzw. bei fehlgeschlagenem Neustart gelöscht). Benannter Mutex: nur ein Helfer gleichzeitig.
+- Anmeldefehler -80045 in SideStore: eigener Hilfe-Bildschirm mit der vorübergehenden Anisette-Lösung.
