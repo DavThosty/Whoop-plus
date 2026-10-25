@@ -19,7 +19,9 @@ Das dauert etwa 20 Minuten.
 ## Was das Programm für dich erledigt
 
 - Es prüft, ob dein Windows passt.
-- Es installiert das kostenlose **Apple-Programm** iTunes, damit der PC das iPhone erkennt (klappt das nicht: „Apple-Geräte“).
+- Es installiert das kostenlose **Apple-Programm** iTunes von Apple, damit der PC das iPhone erkennt.
+  Stört die Store-App **Apple-Geräte**, entfernt es sie nach Rückfrage, repariert iTunes und startet den PC einmal neu
+  (danach geht es von selbst weiter). Hilft die Reparatur zweimal nicht, zeigt es die Schritte von Hand.
   Was schon da ist, wird übersprungen.
 - Es erkennt von selbst, wenn das iPhone per Kabel angeschlossen ist.
 - Es lädt das Programm **iloader** (bringt SideStore aufs iPhone), installiert es und hält es aktuell.
@@ -46,6 +48,7 @@ Das Programm merkt sich, was schon erledigt ist. Beim nächsten Start fragt es �
 | Alles gut – nur prüfen | PC prüfen, iloader auf den neuesten Stand bringen. |
 | SideStore öffnet nicht oder ist abgelaufen | SideStore wird mit iloader neu aufgespielt. Whoop Plus und deine Daten bleiben erhalten – **Whoop Plus nicht löschen**. |
 | Fehlermeldung zur Verbindung, z. B. nach einem iOS-Update | Die Verbindung zwischen iPhone und SideStore wird mit iloader erneuert. |
+| Mein iPhone wird am PC nicht erkannt | Sucht die Ursache (Apple-Programm, Dienst, Kabelverbindung, Vertrauen) und repariert, was geht. |
 | Ich habe ein neues iPhone | Alle iPhone-Schritte noch einmal. |
 
 Ganz unten gibt es außerdem „Erweitert: alles von vorne einrichten“.
@@ -105,5 +108,20 @@ Hinweise:
   Installation mit `msiexec /qb!` über die Windows-Abfrage (`runas`); „Nein“ wird als Win32-Fehler 1223 erkannt.
 - iPhone- und Apple-Programm-Suche laufen in einem eigenen Runspace (das Fenster ruckelt nicht).
 - Modul-Versionen sind fest: Pester 5.9.0, PSScriptAnalyzer 1.25.0, ps2exe 1.0.18 (Workflow und `build.ps1`).
-- Apple-Programm: wie von SideStore empfohlen zuerst iTunes (`Apple.iTunes`), ersatzweise „Apple-Geräte“ aus dem
-  Microsoft Store (`9NP83LWLPZ9K`), beides über winget; ohne winget öffnet sich Apples Download-Seite.
+- Apple-Programm: nur iTunes von Apple – winget `Apple.iTunes` (lädt Apples `iTunes64Setup.exe`), sonst das
+  Installationsprogramm direkt von apple.com (Weiterleitung nur auf `*.apple.com`, Authenticode „Apple Inc.“ geprüft,
+  `/quiet`), zuletzt die Apple-Seite im Browser. Nach einem Erfolg wird nie ein weiterer Weg installiert.
+  Danach bis zu 60 s auf „Apple Mobile Device Service“ warten (gestoppt → mit Rückfrage starten, fehlt → Neustart).
+- Bewertung (`Get-AppleSoftwareDiagnosis`): Store-App „Apple-Geräte“ → *Conflict*, aber nur wenn der Dienst nicht läuft
+  oder usbmuxd nicht antwortet (entfernen, iTunes neu installieren, Neustart; Apple Music/TV stören nicht);
+  iTunes ohne Apple Mobile Device Support/Dienst → *Broken* (iTunes neu installieren). Bei der Reparatur zählt winget
+  „schon installiert“ nicht – dann Apples Installationsprogramm direkt. Neustart nur, wenn sich etwas geändert hat;
+  Fehlversuche zählt `state.json` (`RepairAttempts`), ab dem 2. die Schritte von Hand.
+- Verbindung zählt nur, wenn usbmuxd das iPhone meldet. Sieht nur Windows es, sucht `Get-ConnectDiagnosis` die Ursache:
+  Dienst gestoppt (starten), Dienst antwortet nach 3 Versuchen nicht (iTunes reparieren), kein Apple-Treiber/Gerätefehler
+  (`pnputil /add-driver …\usbaapl64.inf /install`, Rückgabe 0/3010/259 = ok), sonst entsperren/neu anstecken/neu starten.
+  Nach frischer Installation: nach ~30 s Neustart anbieten.
+- Neustart mit `shutdown /r /t 0` (ohne `/f` – offene Programme dürfen nach dem Speichern fragen). `state.json` merkt Modus
+  und Schritt; die .exe wird nach `%LOCALAPPDATA%\WhoopPlusSetup` kopiert und per `HKCU\…\RunOnce` einmal gestartet
+  (Eintrag wird beim Weitermachen bzw. bei fehlgeschlagenem Neustart gelöscht). Benannter Mutex: nur ein Helfer gleichzeitig.
+- Anmeldefehler -80045 in SideStore: eigener Hilfe-Bildschirm mit der vorübergehenden Anisette-Lösung.

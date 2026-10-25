@@ -208,22 +208,48 @@ Describe 'Windows-Prüfung' {
 }
 
 Describe 'Apple-Programm installieren' {
-    It 'mit winget: iTunes zuerst (SideStore-Empfehlung), auch unter Windows <Version>' -TestCases @(
-        @{ Version = '10'; Win11 = $false }
-        @{ Version = '11'; Win11 = $true }
+    It 'nur iTunes von Apple: mit winget <Expected>' -TestCases @(
+        @{ Winget = $true; Expected = @('ITunesWinget', 'ITunesDirect', 'Manual') }
+        @{ Winget = $false; Expected = @('ITunesDirect', 'Manual') }
     ) {
-        Get-AppleInstallMethods -IsWindows11 $Win11 -WingetAvailable $true | Should -Be @('ITunesWinget', 'AppleDevicesStore', 'Manual')
+        $methods = @(Get-AppleInstallMethods -WingetAvailable $Winget)
+        $methods | Should -Be $Expected
+        $methods | Should -Not -Contain 'AppleDevicesStore'
     }
-    It 'ohne winget: Download-Seite' {
-        @(Get-AppleInstallMethods -IsWindows11 $true -WingetAvailable $false) | Should -Be @('Manual')
+    It 'baut den winget-Aufruf für iTunes (Reparatur mit --force)' {
+        $normal = Get-WingetArguments
+        $normal -join ' ' | Should -Match '--id Apple\.iTunes --exact --source winget'
+        $normal | Should -Contain '--accept-package-agreements'
+        $normal | Should -Not -Contain '--force'
+        Get-WingetArguments -Force | Should -Contain '--force'
+        (Get-WingetArguments) -join ' ' | Should -Not -Match 'msstore|9NP83LWLPZ9K'
     }
-    It 'baut die winget-Aufrufe mit den richtigen Kennungen' {
-        $store = Get-WingetArguments 'AppleDevicesStore'
-        $store -join ' ' | Should -Match '--id 9NP83LWLPZ9K --exact --source msstore'
-        $itunes = Get-WingetArguments 'ITunesWinget'
-        $itunes -join ' ' | Should -Match '--id Apple\.iTunes --exact --source winget'
-        $itunes | Should -Contain '--accept-package-agreements'
-        $itunes | Should -Contain '--accept-source-agreements'
+    It 'nach Erfolg nie einen weiteren Weg: <Kind> -> <Step>' -TestCases @(
+        @{ Kind = 'Success'; Step = 'Verify' }
+        @{ Kind = 'AlreadyInstalled'; Step = 'Verify' }
+        @{ Kind = 'HashMismatch'; Step = 'Problem' }
+        @{ Kind = 'NotFound'; Step = 'Next' }
+        @{ Kind = 'Failed'; Step = 'Next' }
+        @{ Kind = 'SuccessRebootRequired'; Step = 'VerifyReboot' }
+        @{ Kind = 'Cancelled'; Step = 'Stop' }
+    ) {
+        Get-NextInstallStep $Kind | Should -Be $Step
+    }
+    It 'Reparatur: „schon installiert“ zählt nicht als erledigt' {
+        Get-NextInstallStep 'AlreadyInstalled' -Repair | Should -Be 'Next'
+        Get-NextInstallStep 'Success' -Repair | Should -Be 'Verify'
+    }
+    It 'nach der Reparatur: <Before> -> <After>, Fehlversuche <Failed> = <Outcome>' -TestCases @(
+        @{ Before = 'Broken'; After = 'Ok'; Failed = 0; Outcome = 'RebootOffer' }
+        @{ Before = 'Broken'; After = 'ServiceStopped'; Failed = 1; Outcome = 'RebootOffer' }
+        @{ Before = 'Broken'; After = 'Broken'; Failed = 1; Outcome = 'Retry' }
+        @{ Before = 'Broken'; After = 'Broken'; Failed = 2; Outcome = 'Manual' }
+    ) {
+        Get-RepairOutcome -StatusBefore $Before -StatusAfter $After -FailedAttempts $Failed | Should -Be $Outcome
+    }
+    It 'pnputil-Rückgabewerte' {
+        foreach ($ok in '0', '3010', '259') { Test-PnputilSuccess $ok | Should -BeTrue }
+        foreach ($bad in '1', '5', 'Failed', 'Unknown', '') { Test-PnputilSuccess $bad | Should -BeFalse }
     }
     It 'deutet Rückgabewerte' {
         Get-WingetResultKind 0 | Should -Be 'Success'
@@ -231,6 +257,12 @@ Describe 'Apple-Programm installieren' {
         Get-WingetResultKind -1978335212 | Should -Be 'NotFound'
         Get-WingetResultKind 5 | Should -Be 'Failed'
         Get-WingetResultKind -1978335215 | Should -Be 'HashMismatch'   # 0x8A150011 INSTALLER_HASH_MISMATCH
+        Get-WingetResultKind ([int]0x8A150109) | Should -Be 'SuccessRebootRequired'
+        Get-WingetResultKind ([int]0x8A15010A) | Should -Be 'SuccessRebootRequired'
+        Get-WingetResultKind ([int]0x8A15010C) | Should -Be 'Cancelled'
+        Get-WingetResultKind ([int]0x8A15010D) | Should -Be 'AlreadyInstalled'
+        Get-WingetResultKind 1602 | Should -Be 'Cancelled'
+        Get-WingetResultKind 1223 | Should -Be 'Cancelled'
         Get-WingetResultKind ([int]0x8A150011) | Should -Be 'HashMismatch'
         Get-MsiResultKind 0 | Should -Be 'Success'
         Get-MsiResultKind 3010 | Should -Be 'Success'
@@ -278,6 +310,12 @@ Describe 'Ablauf' {
         $plan | Should -Not -Contain 'VpnInstall'
         (Get-SetupPlan -Mode Expired -State $null) | Should -Contain 'VpnInstall'
     }
+    It 'iPhone wird nicht erkannt: Apple-Programm und Verbindung prüfen' {
+        $plan = Get-SetupPlan -Mode Diagnose -State $null
+        $plan | Should -Be @('Windows', 'AppleSoftware', 'Connect', 'ConnectDone')
+        (Get-ScreenDefinition 'Changed').Tiles.Action | Should -Contain 'Mode:Diagnose'
+        (Get-ScreenDefinition 'Welcome').Links.Action | Should -Contain 'Mode:Diagnose'
+    }
     It 'Verbindungsfehler ersetzt die Verbindungsdatei' {
         $plan = Get-SetupPlan -Mode Pairing -State $null
         $plan | Should -Contain 'PairingPlace'
@@ -295,8 +333,8 @@ Describe 'Ablauf' {
     }
     It 'jeder Bildschirm aller Abläufe hat Text, Bild und Knopf' {
         $data = Get-EmbeddedAssetData
-        foreach ($mode in 'First', 'Full', 'NewPhone', 'Check', 'Expired', 'Pairing') {
-            foreach ($id in (Get-SetupPlan -Mode $mode -State $null) + @('Welcome', 'Changed')) {
+        foreach ($mode in 'First', 'Full', 'NewPhone', 'Check', 'Expired', 'Pairing', 'Diagnose') {
+            foreach ($id in (Get-SetupPlan -Mode $mode -State $null) + @('Welcome', 'Changed', 'AppleConflict', 'ConnectUnresolved', 'AppleManualRepair', 'SignIn80045')) {
                 $d = Get-ScreenDefinition -Id $id -Mode $mode
                 $d.Title | Should -Not -BeNullOrEmpty -Because $id
                 $d.Body | Should -Not -BeNullOrEmpty -Because $id
@@ -310,7 +348,8 @@ Describe 'Ablauf' {
         $forbidden = 'winget', 'MSI', 'Registry', 'Log', 'Repository', 'IPA', 'VID', 'Treiber', 'usbmux', 'PowerShell'
         $ids = 'Welcome', 'Changed', 'Windows', 'AppleSoftware', 'VpnInstall', 'VpnConnect', 'Connect', 'ILoader', 'ILoaderLogin',
         'ILoaderInstall', 'PhoneTrust', 'DevMode', 'SideStoreOpen', 'SideStoreRefresh', 'AddSource', 'Done', 'CheckDone',
-        'PairingDelete', 'PairingSelect', 'PairingPlace', 'PairingDone'
+        'PairingDelete', 'PairingSelect', 'PairingPlace', 'PairingDone', 'AppleConflict', 'ConnectDone', 'ConnectUnresolved',
+        'AppleManualRepair', 'SignIn80045'
         foreach ($id in $ids) {
             $d = Get-ScreenDefinition -Id $id -Mode 'Expired'
             $texts = @($d.Title, $d.Body, $d.QrCaption, $d.Primary) + @($d.Secondary | ForEach-Object { $_.Text }) + @($d.Links | ForEach-Object { $_.Text }) + @($d.Tiles | ForEach-Object { $_.Text })
@@ -321,7 +360,7 @@ Describe 'Ablauf' {
         }
     }
     It 'Sätze bleiben kurz (höchstens ~2 Zeilen)' {
-        foreach ($id in 'VpnInstall', 'VpnConnect', 'Connect', 'ILoaderLogin', 'ILoaderInstall', 'PhoneTrust', 'DevMode', 'SideStoreOpen', 'SideStoreRefresh', 'AddSource') {
+        foreach ($id in 'VpnInstall', 'VpnConnect', 'Connect', 'ILoaderLogin', 'ILoaderInstall', 'PhoneTrust', 'DevMode', 'SideStoreOpen', 'SideStoreRefresh', 'AddSource', 'SignIn80045', 'AppleManualRepair', 'AppleConflict') {
             $body = (Get-ScreenDefinition -Id $id).Body -replace '\*\*', ''
             foreach ($line in ($body -split "`n")) { $line.Length | Should -BeLessOrEqual 140 -Because "$id`: $line" }
         }
@@ -344,6 +383,23 @@ Describe 'Gemerkte Schritte' {
         $back = ConvertTo-SetupState (([pscustomobject]$s | ConvertTo-Json) | ConvertFrom-Json)
         $back.VpnDone | Should -BeTrue
         $back.Contains('Fremd') | Should -BeFalse
+    }
+    It 'merkt sich den Schritt für nach dem Neustart' {
+        $s = ConvertTo-SetupState @{ ResumeStep = 'Connect'; ResumeMode = 'First' }
+        $back = ConvertTo-SetupState (([pscustomobject]$s | ConvertTo-Json) | ConvertFrom-Json)
+        $back.ResumeStep | Should -Be 'Connect'
+        $back.ResumeMode | Should -Be 'First'
+        (ConvertTo-SetupState @{ RepairAttempts = 2 }).RepairAttempts | Should -Be 2
+        (ConvertTo-SetupState @{ RepairAttempts = 'x' }).RepairAttempts | Should -Be 0
+        Get-ResumeIndex -Plan @('Windows', 'AppleSoftware', 'Connect') -Step 'Connect' | Should -Be 2
+        Get-ResumeIndex -Plan @('Windows', 'AppleSoftware') -Step 'Gibtsnicht' | Should -Be 0
+        Get-ResumeIndex -Plan @('Windows') -Step $null | Should -Be 0
+    }
+    It 'Autostart nach dem Neustart (RunOnce)' {
+        New-RunOnceCommand -ExePath 'C:\Users\a b\Downloads\WhoopPlus-Setup.exe' | Should -Be '"C:\Users\a b\Downloads\WhoopPlus-Setup.exe"'
+        New-RunOnceCommand -ScriptPath 'C:\x\WhoopPlusSetup.ps1' | Should -Match '^powershell\.exe .*-File "C:\\x\\WhoopPlusSetup\.ps1"$'
+        { New-RunOnceCommand -ExePath 'C:\x" & calc "' } | Should -Throw
+        New-RunOnceCommand | Should -BeNullOrEmpty
     }
     It 'speichert und liest state.json' {
         $s = ConvertTo-SetupState @{ DevModeDone = $true }
@@ -474,6 +530,330 @@ Describe 'iPhone-Erkennung' {
     It 'kommt mit leerer Liste zurecht' {
         $plist = ConvertFrom-PlistXml '<?xml version="1.0"?><plist version="1.0"><dict><key>DeviceList</key><array/></dict></plist>'
         @(Get-UsbmuxDeviceList -Plist $plist).Count | Should -Be 0
+    }
+}
+
+Describe 'Apple-Programm: Bewertung' {
+    BeforeAll {
+        $script:App = { param($kind) [pscustomobject]@{ Name = "AppleInc.$kind"; Version = '1.0'; Kind = $kind } }
+        $script:Facts = {
+            param([string]$ITunes, [string]$Amds, [bool]$Service, [string]$Status, [object[]]$Store, [bool]$Usbmux = ($Status -eq 'Running'))
+            [pscustomobject]@{ UsbmuxReachable = $Usbmux; ITunesVersion = $ITunes; AmdsVersion = $Amds; ServiceExists = $Service; ServiceName = $(if ($Service) { 'Apple Mobile Device Service' } else { $null })
+                ServiceStatus = $Status; ServiceStartType = 'Automatic'; StoreApps = @($Store) }
+        }
+    }
+    It 'erkennt Store-Apps' {
+        Get-AppleStoreAppKind 'AppleInc.AppleDevices' | Should -Be 'AppleDevices'
+        Get-AppleStoreAppKind 'AppleInc.AppleMusicWin' | Should -Be 'AppleMusic'
+        Get-AppleStoreAppKind 'AppleInc.AppleTVWin' | Should -Be 'AppleTV'
+        Get-AppleStoreAppKind 'AppleInc.iTunes' | Should -Be 'iTunesStore'
+        Get-AppleStoreAppKind 'AppleInc.iCloud' | Should -Be 'Other'
+        Get-AppleStoreAppLabel 'AppleDevices' | Should -Be 'Apple-Geräte'
+    }
+    It 'nichts installiert -> Missing' {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '' '' $false '' @())).Status | Should -Be 'Missing'
+    }
+    It 'iTunes mit laufendem Dienst -> Ok' {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '19.0' $true 'Running' @())).Status | Should -Be 'Ok'
+    }
+    It 'Dienst gestoppt -> ServiceStopped' {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '19.0' $true 'Stopped' @())).Status | Should -Be 'ServiceStopped'
+    }
+    It 'iTunes da, Apple Mobile Device Support/Dienst weg (nach Entfernen von Apple-Geräte) -> Broken' {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '' $false '' @())).Status | Should -Be 'Broken'
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '' '19.0' $false '' @())).Status | Should -Be 'Broken'
+    }
+    It '„Apple-Geräte“ stört nur, wenn Dienst oder usbmuxd nicht gehen' {
+        $dev = & $script:App 'AppleDevices'
+        $d = Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '' $false '' @($dev) $false)
+        $d.Status | Should -Be 'Conflict'
+        $d.Conflicts[0].Kind | Should -Be 'AppleDevices'
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '19.0' $true 'Stopped' @($dev) $false)).Status | Should -Be 'Conflict'
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '19.0' $true 'Running' @($dev) $false)).Status | Should -Be 'Conflict'
+        # Dienst läuft und usbmuxd antwortet: kein Grund, etwas zu entfernen.
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '19.0' $true 'Running' @($dev) $true)).Status | Should -Be 'Ok'
+    }
+    It 'Apple Music und Apple TV sind kein Konflikt: <Kind>' -TestCases @(@{ Kind = 'AppleMusic' }, @{ Kind = 'AppleTV' }) {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '19.0' $true 'Running' @((& $script:App $Kind)))).Status | Should -Be 'Ok'
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '12.13.11.1' '' $false '' @((& $script:App $Kind)))).Status | Should -Be 'Broken'
+    }
+    It 'nur „Apple-Geräte“ ohne iTunes und ohne Dienst -> Conflict' {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '' '' $false '' @((& $script:App 'AppleDevices')))).Status | Should -Be 'Conflict'
+    }
+    It 'iTunes aus dem Store allein -> Ok' {
+        (Get-AppleSoftwareDiagnosis (& $script:Facts '' '' $false '' @((& $script:App 'iTunesStore')))).Status | Should -Be 'Ok'
+    }
+    It 'prüft Apples Signatur und Download-Adresse' {
+        Test-AppleAuthenticode -Status 'Valid' -Subject 'CN=Apple Inc., O=Apple Inc., L=Cupertino, S=California, C=US' | Should -BeTrue
+        Test-AppleAuthenticode -Status 'NotSigned' -Subject 'CN=Apple Inc., O=Apple Inc.' | Should -BeFalse
+        Test-AppleAuthenticode -Status 'Valid' -Subject 'CN=Apple Inc. Fake Ltd, O=Evil' | Should -BeFalse
+        Test-AppleDownloadUrl 'https://secure-appldnld.apple.com/itunes12/140-75773/iTunes64Setup.exe' | Should -BeTrue
+        Test-AppleDownloadUrl 'https://apple.com.evil.example/iTunes64Setup.exe' | Should -BeFalse
+        Test-AppleDownloadUrl 'http://secure-appldnld.apple.com/iTunes64Setup.exe' | Should -BeFalse
+    }
+    It 'Dienst-Befehl nur mit harmlosem Namen' {
+        New-ServiceStartArguments 'Apple Mobile Device Service' | Should -Be '/c sc.exe config "Apple Mobile Device Service" start= auto & sc.exe start "Apple Mobile Device Service"'
+        { New-ServiceStartArguments 'x" & calc & "' } | Should -Throw
+    }
+}
+
+Describe 'Apple-Programm: Ablauf (System gemockt)' {
+    BeforeAll {
+        foreach ($f in 'Set-Status', 'Set-Busy', 'Set-PrimaryButton', 'Set-SecondaryButtons', 'Set-ActivityProgress') {
+            if (-not (Get-Command $f -ErrorAction SilentlyContinue)) { throw "$f fehlt" }
+        }
+    }
+    It 'winget-Erfolg: kein zweiter Weg' {
+        Mock Find-Winget { 'C:\winget.exe' }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'Success' }
+        Mock Install-ITunesDirect { 'Success' }
+        Invoke-ITunesInstall | Should -Be 'Success'
+        Should -Invoke Invoke-ITunesWinget -Times 1 -Exactly
+        Should -Invoke Install-ITunesDirect -Times 0 -Exactly
+    }
+    It 'winget schlägt fehl -> Apples Installationsprogramm direkt' {
+        Mock Find-Winget { 'C:\winget.exe' }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'Failed' }
+        Mock Install-ITunesDirect { 'Success' }
+        Invoke-ITunesInstall | Should -Be 'Success'
+        Should -Invoke Install-ITunesDirect -Times 1 -Exactly
+    }
+    It 'beschädigter Download -> abbrechen, kein anderer Weg' {
+        Mock Find-Winget { 'C:\winget.exe' }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'HashMismatch' }
+        Mock Install-ITunesDirect { 'Success' }
+        Invoke-ITunesInstall | Should -Be 'HashMismatch'
+        Should -Invoke Install-ITunesDirect -Times 0 -Exactly
+    }
+    It 'ohne winget direkt von Apple; Reparatur übergibt --force' {
+        Mock Find-Winget { $null }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'Success' }
+        Mock Install-ITunesDirect { 'Failed' }
+        Invoke-ITunesInstall | Should -Be 'Failed'
+        Should -Invoke Invoke-ITunesWinget -Times 0 -Exactly
+        Mock Find-Winget { 'C:\winget.exe' }
+        Invoke-ITunesInstall -Repair | Should -Be 'Success'
+        Should -Invoke Invoke-ITunesWinget -Times 1 -Exactly -ParameterFilter { $Repair }
+    }
+    It 'Reparatur: winget sagt „schon installiert“ -> Apples Installationsprogramm direkt' {
+        Mock Find-Winget { 'C:\winget.exe' }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'AlreadyInstalled' }
+        Mock Install-ITunesDirect { 'Success' }
+        Invoke-ITunesInstall -Repair | Should -Be 'Success'
+        Should -Invoke Install-ITunesDirect -Times 1 -Exactly
+    }
+    It 'abgebrochen (Windows-Abfrage „Nein“) -> kein zweiter Versuch' {
+        Mock Find-Winget { 'C:\winget.exe' }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'Cancelled' }
+        Mock Install-ITunesDirect { 'Success' }
+        Invoke-ITunesInstall | Should -Be 'Cancelled'
+        Should -Invoke Install-ITunesDirect -Times 0 -Exactly
+    }
+    It 'winget: Neustart nötig -> Erfolg mit Neustart' {
+        Mock Find-Winget { 'C:\winget.exe' }
+        Mock Set-Status { }
+        Mock Invoke-ITunesWinget { 'SuccessRebootRequired' }
+        Mock Install-ITunesDirect { 'Success' }
+        Invoke-ITunesInstall | Should -Be 'SuccessReboot'
+        Should -Invoke Install-ITunesDirect -Times 0 -Exactly
+    }
+    It 'Reparatur hilft -> Neustart anbieten, Zähler bleibt' {
+        $script:State = ConvertTo-SetupState $null
+        Mock Set-Busy { }
+        Mock Set-Status { }
+        Mock Save-SetupState { }
+        Mock Invoke-Check { [pscustomobject]@{ Status = 'Broken' } }
+        Mock Invoke-ITunesInstall { 'Success' }
+        Mock Wait-AppleReady { [pscustomobject]@{ Status = 'Ok' } }
+        Mock Show-RebootOffer { }
+        Repair-AppleSoftwareUi
+        Should -Invoke Show-RebootOffer -Times 1 -Exactly
+        $script:State.RepairAttempts | Should -Be 0
+    }
+    It 'Reparatur ändert nichts: erst nochmal versuchen, beim 2. Mal Schritte von Hand' {
+        $script:State = ConvertTo-SetupState $null
+        $script:Plan = [string[]]@('Windows', 'AppleSoftware', 'Connect'); $script:Index = 1
+        Mock Set-Busy { }
+        Mock Set-Status { }
+        Mock Set-PrimaryButton { }
+        Mock Save-SetupState { }
+        Mock Show-Problem { }
+        Mock Move-Next { }
+        Mock Show-RebootOffer { }
+        Mock Invoke-Check { [pscustomobject]@{ Status = 'Broken' } }
+        Mock Invoke-ITunesInstall { 'Success' }
+        Mock Wait-AppleReady { [pscustomobject]@{ Status = 'Broken' } }
+        Repair-AppleSoftwareUi
+        $script:State.RepairAttempts | Should -Be 1
+        Should -Invoke Show-Problem -Times 1 -Exactly
+        Repair-AppleSoftwareUi
+        $script:State.RepairAttempts | Should -Be 2
+        $script:Plan | Should -Contain 'AppleManualRepair'
+        Should -Invoke Move-Next -Times 1 -Exactly
+        Should -Invoke Show-RebootOffer -Times 0 -Exactly
+    }
+    It '„Trotzdem weiter“ im Modus „nicht erkannt“ meldet nicht „gefunden“' {
+        $script:Mode = 'Diagnose'
+        $script:Plan = [string[]]@('Windows', 'AppleSoftware', 'Connect', 'ConnectDone'); $script:Index = 2
+        Mock Move-Next { }
+        Invoke-UiAction 'SkipConnect'
+        $script:Plan[3] | Should -Be 'ConnectUnresolved'
+        Should -Invoke Move-Next -Times 1 -Exactly
+    }
+    It 'Fehler -80045: Hilfe-Bildschirm vor der Anmeldung einfügen' {
+        $script:Mode = 'First'
+        $script:Plan = [string[]]@('SideStoreOpen', 'SideStoreRefresh'); $script:Index = 0
+        Mock Enter-Screen { }
+        Invoke-UiAction 'SignInHelp'
+        $script:Plan | Should -Be @('SignIn80045', 'SideStoreOpen', 'SideStoreRefresh')
+        Should -Invoke Enter-Screen -Times 1 -Exactly -ParameterFilter { $Index -eq 0 }
+        (Get-ScreenDefinition 'SideStoreOpen').Secondary.Action | Should -Contain 'SignInHelp'
+        $d = Get-ScreenDefinition 'SignIn80045'
+        $d.Body | Should -Match 'On-Device Anisette'
+        $d.Body | Should -Match 'SideStore \(New\)'
+        $d.Body | Should -Match 'Enable auto rotation'
+        $d.Body | Should -Match 'Save as overrides'
+        $d.Body | Should -Match 'Reset adi\.pb'
+        $d.Links.Action | Should -Contain 'OpenUrl:https://github.com/SideStore/SideStore/issues/1675'
+        $d.Links.Action | Should -Contain 'OpenUrl:https://github.com/nab138/iloader/issues/965'
+    }
+    It 'nur ein Helfer gleichzeitig (Mutex)' {
+        $name = 'Local\WhoopPlusSetupTest-' + [guid]::NewGuid()
+        $first = Enter-SingleInstance -Name $name
+        $first | Should -Not -BeNullOrEmpty
+        $second = Invoke-InBackground -ScriptBlock { param($n) $m = New-Object System.Threading.Mutex -ArgumentList $false, $n; $got = $m.WaitOne(0); if ($got) { $m.ReleaseMutex() }; $m.Dispose(); $got } -ArgumentList @($name) -ForceRunspace
+        $second | Should -BeFalse
+        $first.ReleaseMutex(); $first.Dispose()
+    }
+    It 'nach der Installation: Erfolg -> Abschluss, kein Handbuch-Weg' {
+        Mock Set-Busy { }
+        Mock Invoke-ITunesInstall { 'Success' }
+        Mock Complete-AppleInstall { }
+        Mock Show-AppleManualInstall { }
+        Install-AppleSoftwareUi
+        Should -Invoke Complete-AppleInstall -Times 1 -Exactly
+        Should -Invoke Show-AppleManualInstall -Times 0 -Exactly
+    }
+    It 'Dienst nach 60 s noch nicht da -> Neustart anbieten' {
+        Mock Set-Status { }
+        Mock Set-Busy { }
+        Mock Set-SecondaryButtons { }
+        Mock Set-PrimaryButton { }
+        Mock Wait-AppleReady { [pscustomobject]@{ Status = 'Broken'; Source = 'iTunes'; Facts = [pscustomobject]@{ ServiceExists = $false; ServiceStatus = '' } } }
+        Complete-AppleInstall
+        Should -Invoke Set-PrimaryButton -ParameterFilter { $Action -eq 'Restart' } -Times 1 -Exactly
+        $script:FreshAppleInstall | Should -BeTrue
+        $script:FreshAppleInstall = $false
+    }
+    It 'Store-Apps entfernt -> iTunes automatisch reparieren' {
+        $script:AppleConflicts = @([pscustomobject]@{ Name = 'AppleInc.AppleDevices'; Version = '1'; Kind = 'AppleDevices' })
+        Mock Confirm-Action { $true }
+        Mock Set-Busy { }
+        Mock Set-Status { }
+        Mock Invoke-InBackground { 'ok' }
+        Mock Invoke-Check { [pscustomobject]@{ Status = 'Broken'; Source = 'iTunes' } }
+        Mock Repair-AppleSoftwareUi { }
+        Remove-AppleConflictsUi
+        Should -Invoke Invoke-InBackground -Times 1 -Exactly
+        Should -Invoke Repair-AppleSoftwareUi -Times 1 -Exactly
+        @($script:AppleConflicts).Count | Should -Be 0
+    }
+    It 'ohne Zustimmung wird nichts entfernt' {
+        $script:AppleConflicts = @([pscustomobject]@{ Name = 'AppleInc.AppleDevices'; Version = '1'; Kind = 'AppleDevices' })
+        Mock Confirm-Action { $false }
+        Mock Invoke-InBackground { 'ok' }
+        Mock Repair-AppleSoftwareUi { }
+        Remove-AppleConflictsUi
+        Should -Invoke Invoke-InBackground -Times 0 -Exactly
+        Should -Invoke Repair-AppleSoftwareUi -Times 0 -Exactly
+        $script:AppleConflicts = @()
+    }
+}
+
+Describe 'iPhone-Verbindung: Fehlersuche' {
+    BeforeAll {
+        $script:Apple = { param($status, [bool]$exists, [string]$svc) [pscustomobject]@{ Status = $status; Facts = [pscustomobject]@{ ServiceExists = $exists; ServiceStatus = $svc } } }
+        $script:Dev = { param($inf, $provider, [int]$problem) [pscustomobject]@{ DeviceId = 'USB\VID_05AC&PID_12A8\00008110000A1B2C3D4E5F6A'; Status = 'OK'; ProblemCode = $problem; DriverProvider = $provider; InfName = $inf; DriverVersion = '1.0' } }
+        $script:Conn = {
+            param([bool]$reachable, [int]$count, [object[]]$pnp, $apple)
+            [pscustomobject]@{ UsbmuxReachable = $reachable; UsbmuxDeviceCount = $count; PnpDevices = @($pnp); Apple = $apple; DriverInfPresent = $true }
+        }
+        $script:OkApple = & $script:Apple 'Ok' $true 'Running'
+        $script:AppleDrv = & $script:Dev 'oem42.inf' 'Apple, Inc.' 0
+    }
+    It 'nur der Apple-Gerätedienst zählt als Erfolg' {
+        (Get-ConnectDiagnosis (& $script:Conn $true 1 @() $script:OkApple)).Kind | Should -Be 'Ok'
+    }
+    It 'Apple-Programm kaputt/fehlt/Konflikt -> Apple-Programm reparieren' {
+        foreach ($st in 'Broken', 'Missing', 'Conflict') {
+            $d = Get-ConnectDiagnosis (& $script:Conn $false 0 @($script:AppleDrv) (& $script:Apple $st $false ''))
+            $d.Kind | Should -Be 'AppleSoftware'
+            $d.ButtonAction | Should -Be 'FixApple'
+        }
+    }
+    It 'kein iPhone am USB -> Kabel-Tipp' {
+        (Get-ConnectDiagnosis (& $script:Conn $true 0 @() $script:OkApple)).Kind | Should -Be 'NoDevice'
+    }
+    It 'frisch installiert und iPhone nur von Windows gesehen -> Neustart anbieten' {
+        $d = Get-ConnectDiagnosis (& $script:Conn $true 0 @($script:AppleDrv) $script:OkApple) -FreshInstall
+        $d.Kind | Should -Be 'NeedsRestart'
+        $d.ButtonAction | Should -Be 'Restart'
+    }
+    It 'Dienst gestoppt -> Dienst starten' {
+        $d = Get-ConnectDiagnosis (& $script:Conn $false 0 @($script:AppleDrv) (& $script:Apple 'ServiceStopped' $true 'Stopped'))
+        $d.Kind | Should -Be 'ServiceNotRunning'
+        $d.ButtonAction | Should -Be 'StartAppleService'
+    }
+    It 'Dienst läuft, antwortet aber nicht -> iTunes reparieren' {
+        $d = Get-ConnectDiagnosis (& $script:Conn $false 0 @($script:AppleDrv) $script:OkApple)
+        $d.Kind | Should -Be 'ServiceBroken'
+        $d.ButtonAction | Should -Be 'RepairApple'
+    }
+    It 'Windows-Treiber statt Apple-Treiber oder Gerätefehler -> Reparieren' {
+        (Get-ConnectDiagnosis (& $script:Conn $true 0 @((& $script:Dev 'wpdmtp.inf' 'Microsoft' 0)) $script:OkApple)).Kind | Should -Be 'DriverMissing'
+        (Get-ConnectDiagnosis (& $script:Conn $true 0 @((& $script:Dev 'usbaapl64.inf' 'Apple, Inc.' 28)) $script:OkApple)).ButtonAction | Should -Be 'InstallAppleDriver'
+    }
+    It 'Treiber ok, Dienst ok, aber nicht gemeldet -> entsperren, neu anstecken, neu starten (kein Zurücksetzen)' {
+        $d = Get-ConnectDiagnosis (& $script:Conn $true 0 @($script:AppleDrv) $script:OkApple)
+        $d.Kind | Should -Be 'Replug'
+        $d.Action | Should -Match 'entsperren'
+        $d.Action | Should -Match 'abziehen und wieder anstecken'
+        $d.ButtonAction | Should -Be 'Restart'
+        $d.Action | Should -Not -Match 'Zurücksetzen|Standort'
+    }
+    It 'Test-IPhoneConnected: Windows allein reicht nicht' {
+        if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) { function global:Get-CimInstance { param($ClassName, $Filter) } }
+        Mock Get-UsbmuxDevices { throw 'kein Dienst' }
+        Mock Get-CimInstance { [pscustomobject]@{ PNPDeviceID = 'USB\VID_05AC&PID_12A8\00008110000A1B2C3D4E5F6A'; Present = $true } }
+        $r = Test-IPhoneConnected
+        $r.Connected | Should -BeFalse
+        $r.PnpSeen | Should -BeTrue
+        $r.Via | Should -Be 'pnp'
+        $r.UsbmuxReachable | Should -BeFalse
+        Mock Get-UsbmuxDevices { [pscustomobject]@{ DeviceId = 1; Udid = 'x'; ConnectionType = 'USB' } }
+        $ok = Test-IPhoneConnected
+        $ok.Connected | Should -BeTrue
+        $ok.Via | Should -Be 'usbmux'
+    }
+    It 'Bericht ohne Seriennummer, mit Programmen, Dienst und Treiber' {
+        $appleFacts = [pscustomobject]@{ ITunesVersion = '12.13.11.1'; AmdsVersion = '19.0'; ServiceExists = $true; ServiceName = 'Apple Mobile Device Service'
+            ServiceStatus = 'Running'; ServiceStartType = 'Automatic'; StoreApps = @([pscustomobject]@{ Name = 'AppleInc.AppleDevices'; Version = '1.2'; Kind = 'AppleDevices' }) }
+        $conn = & $script:Conn $true 0 @($script:AppleDrv) ([pscustomobject]@{ Status = 'Conflict'; Facts = $appleFacts })
+        $text = (Format-DiagnosticsReport $appleFacts $conn) -join "`n"
+        $text | Should -Match 'iTunes: 12\.13\.11\.1'
+        $text | Should -Match 'AppleInc\.AppleDevices 1\.2'
+        $text | Should -Match 'Dienst: vorhanden=True Status=Running'
+        $text | Should -Match 'USB\\VID_05AC&PID_12A8 '
+        $text | Should -Match 'Apple, Inc\. oem42\.inf'
+        $text | Should -Match 'Diagnose Apple-Programm: Conflict'
+        $text | Should -Not -Match '00008110'
+        ConvertTo-SafeDeviceId 'USB\VID_05AC&PID_12A8&MI_01\7&2B3C&0&0001' | Should -Be 'USB\VID_05AC&PID_12A8&MI_01'
     }
 }
 

@@ -96,7 +96,9 @@ Workflow den Block `push:` entfernen, sodass nur `workflow_dispatch` übrig blei
 
 Der einfache Weg ist der Einrichtungs-Helfer `WhoopPlus-Setup.exe` aus der [Anleitung](ANLEITUNG.md#2-einmal-einrichten).
 Er macht dieselben Schritte wie unten: prüft Windows (64 Bit), installiert bei Bedarf iTunes per winget
-(`Apple.iTunes`, ersatzweise „Apple-Geräte“ aus dem Microsoft Store oder Apples Download-Seite), erkennt das
+(`Apple.iTunes`, ersatzweise Apples `iTunes64Setup.exe` direkt; die Store-App „Apple-Geräte“ wird bewusst nicht
+installiert, weil sie sich mit iTunes nicht verträgt – ist sie da, entfernt der Helfer sie nach Rückfrage und
+repariert iTunes), erkennt das
 iPhone per USB, lädt/aktualisiert iloader aus den GitHub-Releases und zeigt die Klicks in iloader und am iPhone.
 Er merkt sich erledigte iPhone-Schritte und bietet später „SideStore abgelaufen“, „Kopplung erneuern“ und
 „neues iPhone“ an. Bericht: `%LOCALAPPDATA%\WhoopPlusSetup\log.txt`. Quellcode, Build (ps2exe) und Tests:

@@ -149,6 +149,25 @@ WLAN an? **LocalDevVPN** auf **Connect**? Beide Apps einmal ganz schließen und 
 Er führt dich durch das Erneuern der Kopplung (etwa 2 Minuten). Von Hand:
 [TECHNIK.md unter „Pairing-Datei ersetzen“](TECHNIK.md#8-fehlerbehebung).
 
+**Der PC erkennt mein iPhone nicht.**
+(iloader meldet z. B. „Failed to connect to usbmuxd“, oder iTunes sieht das iPhone nicht.)
+Am PC den Helfer **WhoopPlus-Setup.exe** starten und die Kachel **Mein iPhone wird am PC nicht erkannt** wählen.
+Er sucht die Ursache, repariert iTunes bei Bedarf und startet den PC einmal neu – danach macht er von selbst weiter.
+Wichtig: Am PC **iTunes** von Apple verwenden und nicht zusätzlich die Store-App **Apple-Geräte**.
+
+**SideStore-Anmeldung: „Failed to Sign In … (-80045)“.**
+Das ist eine Sperre bei Apple (seit Mitte Oktober 2026, betrifft alle Sideloading-Programme). Vorübergehend hilft oft:
+1. In SideStore **Settings** → **User Customizations**: **On-Device Anisette** ausschalten und den Neustart bestätigen.
+2. **Anisette Servers**: **SideStore (New)** wählen, nach unten scrollen und **Enable auto rotation** ausschalten.
+3. **User Customizations** → **Anisette client configuration** → **Remote server sync**: **Fetch**, dann **Save as overrides**.
+4. **User Customizations** → **Reset adi.pb** tippen.
+5. SideStore ganz schließen und neu anmelden – das dauert etwas.
+
+Kommt „502“, ist der Server gerade voll: später nochmal versuchen. Das klappt leider nicht bei jedem Konto.
+Quellen: [SideStore #1675](https://github.com/SideStore/SideStore/issues/1675),
+[iloader #965](https://github.com/nab138/iloader/issues/965). Der Helfer zeigt diese Schritte auch an
+(beim Schritt „SideStore öffnen“ → **Fehler -80045?**).
+
 **Das Band wird nicht gefunden.**
 Offizielle WHOOP-App schließen, Band laden und näher ans iPhone legen. In **Einstellungen** → **Bluetooth** beim
 WHOOP-Band auf **ⓘ** → **Dieses Gerät ignorieren**, dann in Whoop Plus erneut **Band verbinden**.
