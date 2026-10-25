@@ -20,12 +20,22 @@
       "iconURL": "https://raw.githubusercontent.com/DavThosty/Whoop-plus/sidestore/icon.png",
       "tintColor": "#16ec06",
       "category": "lifestyle",
-      "version": "0.1.17",
-      "versionDate": "2026-10-24T21:23:46Z",
-      "versionDescription": "Einrichtungshelfer für Windows\n\nNeu: WhoopPlus-Setup.exe richtet SideStore am Windows-PC weitgehend automatisch ein – ein Knopf „Los geht's“, erledigte Schritte werden übersprungen, und bei Problemen (SideStore abgelaufen, Verbindungsfehler, neues iPhone) führt er dich nur durch das Nötige.",
-      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.17.ipa",
-      "size": 1137924,
+      "version": "0.1.20",
+      "versionDate": "2026-10-25T07:34:22Z",
+      "versionDescription": "Einrichtungshelfer: iPhone-Erkennung klappt beim ersten Versuch\n\nDer Einrichtungshelfer installiert jetzt nur noch iTunes von Apple, erkennt und repariert Konflikte mit „Apple-Geräte“ selbst, bietet nötige Neustarts an und macht danach automatisch weiter. Neu: Kachel „Mein iPhone wird am PC nicht erkannt“ und Hilfe beim SideStore-Anmeldefehler -80045.",
+      "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.20.ipa",
+      "size": 1137983,
       "versions": [
+        {
+          "version": "0.1.20",
+          "buildVersion": "20",
+          "date": "2026-10-25T07:34:22Z",
+          "localizedDescription": "Einrichtungshelfer: iPhone-Erkennung klappt beim ersten Versuch\n\nDer Einrichtungshelfer installiert jetzt nur noch iTunes von Apple, erkennt und repariert Konflikte mit „Apple-Geräte“ selbst, bietet nötige Neustarts an und macht danach automatisch weiter. Neu: Kachel „Mein iPhone wird am PC nicht erkannt“ und Hilfe beim SideStore-Anmeldefehler -80045.",
+          "downloadURL": "https://github.com/DavThosty/Whoop-plus/releases/download/ios-latest/WhoopPlus-0.1.20.ipa",
+          "size": 1137983,
+          "sha256": "55dcc1e494b34190ef8fc1525fa0649ac8f7992f77cf1ed36ec2c9f91f8ccca0",
+          "minOSVersion": "15.0"
+        },
         {
           "version": "0.1.17",
           "buildVersion": "17",
