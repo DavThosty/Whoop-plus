@@ -25,6 +25,7 @@ param(
 )
 
 # region Einstellungen
+$script:ScriptPath = $PSCommandPath   # leer in der .exe
 $script:HelperVersion = '1.0.0'
 $script:Config = @{
     ILoaderApiUrl        = 'https://api.github.com/repos/nab138/iloader/releases/latest'
@@ -39,9 +40,7 @@ $script:Config = @{
     RefreshHelpUrl       = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/ANLEITUNG.md#4-nie-mehr-dran-denken-automatisch-verl%C3%A4ngern'
     GuideUrl             = 'https://github.com/DavThosty/Whoop-plus/blob/main/docs/ANLEITUNG.md'
     ITunesDownloadUrl    = 'https://www.apple.com/itunes/download/win64'
-    AppleDevicesStoreUrl = 'https://apps.microsoft.com/detail/9np83lwlpz9k'
     ITunesWingetId       = 'Apple.iTunes'
-    AppleDevicesStoreId  = '9NP83LWLPZ9K'
     UsbmuxPort           = 27015
     UserAgent            = 'WhoopPlusSetup'
 }
@@ -261,25 +260,21 @@ function Get-WindowsSupport {
 }
 
 function Get-AppleInstallMethods {
-    # Reihenfolge der Installationswege für das Apple-Programm (Apple Mobile Device Support).
-    # Wie von SideStore empfohlen: iTunes von Apple zuerst, die App „Apple-Geräte“ nur als Ersatz.
-    # $IsWindows11 bleibt als Parameter, falls sich die Empfehlung je nach Windows-Version ändert.
-    param([bool]$IsWindows11, [bool]$WingetAvailable)
-    $null = $IsWindows11
-    if (-not $WingetAvailable) { return @('Manual') }
-    return @('ITunesWinget', 'AppleDevicesStore', 'Manual')
+    # Nur iTunes von Apple (wie von SideStore empfohlen): winget Apple.iTunes lädt Apples iTunes64Setup.exe,
+    # sonst Apples Installationsprogramm direkt, als letzter Ausweg die Apple-Seite im Browser.
+    # Die Store-App „Apple-Geräte“ wird bewusst NICHT installiert (verträgt sich nicht mit iTunes).
+    param([bool]$WingetAvailable)
+    if ($WingetAvailable) { return @('ITunesWinget', 'ITunesDirect', 'Manual') }
+    return @('ITunesDirect', 'Manual')
 }
 
 function Get-WingetArguments {
-    param([ValidateSet('AppleDevicesStore', 'ITunesWinget')][string]$Method)
-    if ($Method -eq 'AppleDevicesStore') {
-        $id = $script:Config.AppleDevicesStoreId; $source = 'msstore'
-    }
-    else {
-        $id = $script:Config.ITunesWingetId; $source = 'winget'
-    }
-    return @('install', '--id', $id, '--exact', '--source', $source,
+    # -Force: erneut installieren (Reparatur von Apple Mobile Device Support).
+    param([switch]$Force)
+    $list = @('install', '--id', $script:Config.ITunesWingetId, '--exact', '--source', 'winget',
         '--accept-package-agreements', '--accept-source-agreements', '--silent')
+    if ($Force) { $list += '--force' }
+    return $list
 }
 
 function Get-WingetResultKind {
@@ -351,12 +346,14 @@ function ConvertTo-SetupState {
         SourceDone    = $false
         CompletedAt   = $null
         LastMode      = $null
+        ResumeStep    = $null
+        ResumeMode    = $null
     }
     foreach ($key in @('VpnDone', 'TrustDone', 'DevModeDone', 'SideStoreDone', 'SourceDone')) {
         $value = Get-PropValue $InputObject $key
         if ($value -is [bool]) { $state[$key] = $value }
     }
-    foreach ($key in @('CompletedAt', 'LastMode')) {
+    foreach ($key in @('CompletedAt', 'LastMode', 'ResumeStep', 'ResumeMode')) {
         $value = Get-PropValue $InputObject $key
         if ($value) { $state[$key] = [string]$value }
     }
@@ -366,7 +363,7 @@ function ConvertTo-SetupState {
 function Get-SetupPlan {
     # Welche Bildschirme gezeigt werden. PC-Schritte prüfen sich später selbst und werden ggf. übersprungen.
     param(
-        [ValidateSet('First', 'Full', 'NewPhone', 'Check', 'Expired', 'Pairing')][string]$Mode,
+        [ValidateSet('First', 'Full', 'NewPhone', 'Check', 'Expired', 'Pairing', 'Diagnose')][string]$Mode,
         $State
     )
     $s = ConvertTo-SetupState $State
@@ -391,6 +388,10 @@ function Get-SetupPlan {
         }
         'Pairing' {
             $plan.AddRange([string[]]@('Windows', 'AppleSoftware', 'Connect', 'ILoader', 'PairingDelete', 'PairingSelect', 'PairingPlace', 'PairingDone'))
+        }
+        'Diagnose' {
+            # „Mein iPhone wird nicht erkannt“: Apple-Programm prüfen/reparieren, dann Verbindung mit Fehlersuche.
+            $plan.AddRange([string[]]@('Windows', 'AppleSoftware', 'Connect', 'ConnectDone'))
         }
     }
     return , $plan.ToArray()
@@ -542,6 +543,198 @@ function Get-UsbmuxDeviceList {
     return $devices.ToArray()   # bewusst ausgerollt: Aufrufer nutzen @(...)
 }
 
+function Get-AppleStoreAppKind {
+    # Store-App (Paketname) -> Art. „Apple-Geräte“, Apple Music und Apple TV übernehmen iPhone bzw. Medien von iTunes.
+    param([string]$PackageName)
+    switch -Regex ([string]$PackageName) {
+        'AppleDevices' { return 'AppleDevices' }
+        'AppleMusic' { return 'AppleMusic' }
+        'AppleTV' { return 'AppleTV' }
+        'iTunes' { return 'iTunesStore' }
+        default { return 'Other' }
+    }
+}
+
+function Get-AppleStoreAppLabel {
+    param([string]$Kind)
+    switch ($Kind) {
+        'AppleDevices' { return 'Apple-Geräte' }
+        'AppleMusic' { return 'Apple Music' }
+        'AppleTV' { return 'Apple TV' }
+        'iTunesStore' { return 'iTunes (Microsoft Store)' }
+        default { return $Kind }
+    }
+}
+
+function Get-AppleSoftwareDiagnosis {
+    # Bewertet die gefundenen Apple-Programme. $Facts kommt aus Get-AppleSoftwareFacts (im Test: von Hand gebaut).
+    #   Ok | Missing | Conflict | ServiceStopped | Broken
+    # Nur iTunes von Apple wird unterstützt. Store-Apps „Apple-Geräte“, Apple Music, Apple TV übernehmen das iPhone
+    # bzw. sperren iTunes – und beim Entfernen nehmen sie Teile von iTunes mit (danach iTunes reparieren).
+    param($Facts)
+    $store = @(Get-PropValue $Facts 'StoreApps' | Where-Object { $null -ne $_ })
+    $kinds = @($store | ForEach-Object { [string](Get-PropValue $_ 'Kind') })
+    $hasITunesDesktop = [bool](Get-PropValue $Facts 'ITunesVersion') -or [bool](Get-PropValue $Facts 'AmdsVersion')
+    $hasITunesStore = $kinds -contains 'iTunesStore'
+    $blockers = @($store | Where-Object { @('AppleDevices', 'AppleMusic', 'AppleTV') -contains [string](Get-PropValue $_ 'Kind') })
+    $serviceExists = [bool](Get-PropValue $Facts 'ServiceExists')
+    $serviceRunning = ([string](Get-PropValue $Facts 'ServiceStatus') -eq 'Running')
+    $result = { param($status, $message, $action) [pscustomobject]@{ Status = $status; Message = $message; Action = $action; Conflicts = $blockers } }
+
+    if ($blockers.Count -gt 0) {
+        $names = ($blockers | ForEach-Object { Get-AppleStoreAppLabel ([string](Get-PropValue $_ 'Kind')) }) -join ', '
+        return (& $result 'Conflict' "Die App $names stört iTunes." 'Ich entferne sie, repariere iTunes und starte den PC neu.')
+    }
+    if ($serviceExists -and $serviceRunning) { return (& $result 'Ok' 'Das Apple-Programm ist da.' '') }
+    if ($serviceExists) {
+        return (& $result 'ServiceStopped' 'Das Apple-Programm ist installiert, aber sein Hintergrunddienst läuft nicht.' `
+                'Klicke auf **Dienst starten**. Fragt Windows „Möchten Sie zulassen …“, klicke auf **Ja**.')
+    }
+    if ($hasITunesStore) {
+        # iTunes aus dem Microsoft Store bringt seinen Dienst selbst mit; ob er antwortet, prüft „iPhone anschließen“.
+        return (& $result 'Ok' 'Das Apple-Programm ist da.' '')
+    }
+    if ($hasITunesDesktop) {
+        return (& $result 'Broken' 'iTunes ist installiert, aber ein Teil davon fehlt.' `
+                'Klicke auf **Reparieren**. Ich installiere iTunes neu, danach startet der PC einmal neu.')
+    }
+    return (& $result 'Missing' 'Das Apple-Programm fehlt noch.' 'Klicke auf **Installieren**.')
+}
+
+function Test-AppleAuthenticode {
+    # Ist das heruntergeladene iTunes-Installationsprogramm gültig von Apple signiert?
+    param([string]$Status, [string]$Subject)
+    return ($Status -eq 'Valid' -and [string]$Subject -match '(^|,\s*)(O|CN)=Apple Inc\.(,|$)')
+}
+
+function Test-AppleDownloadUrl {
+    # Nur Downloads, die (nach Weiterleitung) von einem apple.com-Server kommen.
+    param([string]$Url)
+    return ([string]$Url -match '^https://([A-Za-z0-9-]+\.)*apple\.com/[^\s]*$')
+}
+
+function Get-NextInstallStep {
+    # Nach einem winget-Lauf: Verify = erfolgreich, NICHT den nächsten Weg probieren; Next = nächster Weg; Problem = abbrechen.
+    param([string]$Kind)
+    switch ($Kind) {
+        'Success' { return 'Verify' }
+        'AlreadyInstalled' { return 'Verify' }
+        'HashMismatch' { return 'Problem' }
+        default { return 'Next' }
+    }
+}
+
+function ConvertTo-SafeDeviceId {
+    # Nur Hersteller/Produkt/Schnittstelle behalten – keine Seriennummer (UDID) in Bericht oder Anzeige.
+    param([string]$DeviceId)
+    $m = [regex]::Match([string]$DeviceId, '^(USB\\VID_[0-9A-Fa-f]{4}&PID_[0-9A-Fa-f]{4}(&MI_[0-9A-Fa-f]{2})?)')
+    if ($m.Success) { return $m.Groups[1].Value.ToUpperInvariant() }
+    return '(unbekannt)'
+}
+
+function Test-IsAppleDriver {
+    # Ist für dieses Gerät Apples USB-Treiber (usbaapl64.inf) aktiv?
+    param($Device)
+    $inf = [string](Get-PropValue $Device 'InfName')
+    $provider = [string](Get-PropValue $Device 'DriverProvider')
+    $original = [string](Get-PropValue $Device 'OriginalInf')
+    return ($inf -match 'usbaapl' -or $original -match 'usbaapl' -or $provider -match '^Apple')
+}
+
+function Get-ConnectDiagnosis {
+    # Warum findet iloader das iPhone nicht? $Facts kommt aus Get-ConnectFacts (im Test: von Hand gebaut).
+    #   Ok | AppleSoftware | NoDevice | NeedsRestart | ServiceNotRunning | ServiceBroken | DriverMissing | NotTrusted
+    param($Facts, [switch]$FreshInstall)
+    $result = { param($kind, $text, $action, $buttonText, $buttonAction)
+        [pscustomobject]@{ Kind = $kind; Text = $text; Action = $action; ButtonText = $buttonText; ButtonAction = $buttonAction } }
+    if ([int](Get-PropValue $Facts 'UsbmuxDeviceCount') -gt 0) { return (& $result 'Ok' 'iPhone gefunden.' '' $null $null) }
+    $apple = Get-PropValue $Facts 'Apple'
+    $appleStatus = [string](Get-PropValue $apple 'Status')
+    $appleFacts = Get-PropValue $apple 'Facts'
+    if ($appleStatus -in @('Conflict', 'Missing', 'Broken')) {
+        return (& $result 'AppleSoftware' 'Das Apple-Programm auf dem PC muss noch repariert werden.' `
+                'Klicke auf **Apple-Programm reparieren**.' 'Apple-Programm reparieren' 'FixApple')
+    }
+    $devices = @(Get-PropValue $Facts 'PnpDevices' | Where-Object { $null -ne $_ })
+    if ($devices.Count -eq 0) {
+        return (& $result 'NoDevice' 'Ich sehe noch kein iPhone.' `
+                'Probiere ein anderes Kabel oder einen anderen USB-Anschluss. Das iPhone muss entsperrt sein.' $null $null)
+    }
+    if ($FreshInstall) {
+        # Gerade erst installiert: Dienst und Treiber werden meist erst nach einem Neustart aktiv.
+        return (& $result 'NeedsRestart' 'iTunes ist frisch installiert. Windows braucht jetzt einen Neustart.' `
+                'Danach mache ich hier von selbst weiter.' 'PC jetzt neu starten' 'Restart')
+    }
+    if (-not [bool](Get-PropValue $Facts 'UsbmuxReachable')) {
+        if ([bool](Get-PropValue $appleFacts 'ServiceExists') -and [string](Get-PropValue $appleFacts 'ServiceStatus') -ne 'Running') {
+            return (& $result 'ServiceNotRunning' 'Der PC sieht dein iPhone, aber der Apple-Dienst dafür läuft nicht.' `
+                    'Klicke auf **Dienst starten** und bei Windows auf **Ja**.' 'Dienst starten' 'StartAppleService')
+        }
+        return (& $result 'ServiceBroken' 'Der PC sieht dein iPhone, aber der Apple-Dienst antwortet nicht.' `
+                'Klicke auf **Apple-Programm reparieren**. Ich installiere iTunes neu, danach startet der PC einmal neu.' 'Apple-Programm reparieren' 'RepairApple')
+    }
+    $appleDriver = @($devices | Where-Object { Test-IsAppleDriver $_ }).Count -gt 0
+    $problem = @($devices | Where-Object { [int](Get-PropValue $_ 'ProblemCode') -ne 0 }).Count -gt 0
+    if (-not $appleDriver -or $problem) {
+        return (& $result 'DriverMissing' 'Der PC sieht dein iPhone, aber ihm fehlt das Apple-Teil für die Kabelverbindung.' `
+                'Klicke auf **Reparieren** und bei Windows auf **Ja**. Danach das Kabel kurz abziehen und wieder anstecken.' 'Reparieren' 'InstallAppleDriver')
+    }
+    return (& $result 'NotTrusted' 'Der PC sieht dein iPhone, aber das iPhone erlaubt die Verbindung noch nicht.' `
+        ('1. iPhone entsperren und bei „Diesem Computer vertrauen?“ auf **Vertrauen** tippen.' + "`n" +
+            '2. Kommt die Frage nie: Kabel ab, am iPhone **Einstellungen** → **Allgemein** → **iPhone übertragen/zurücksetzen** → ' +
+            '**Zurücksetzen** → **Standort & Datenschutz**, dann wieder anstecken.') $null $null)
+}
+
+function New-ServiceStartArguments {
+    # Befehlszeile für cmd.exe: Dienst auf „Automatisch“ stellen und starten. Nur harmlose Dienstnamen.
+    param([string]$ServiceName)
+    if ($ServiceName -notmatch '^[A-Za-z0-9 ._-]{1,80}$') { throw "Ungültiger Dienstname: $ServiceName" }
+    return ('/c sc.exe config "{0}" start= auto & sc.exe start "{0}"' -f $ServiceName)
+}
+
+function Get-ResumeIndex {
+    # Nach einem Neustart beim gemerkten Schritt weitermachen (unbekannt -> von vorn).
+    param([string[]]$Plan, [string]$Step)
+    if ([string]::IsNullOrEmpty($Step) -or $null -eq $Plan) { return 0 }
+    $i = [array]::IndexOf($Plan, $Step)
+    if ($i -lt 0) { return 0 }
+    return $i
+}
+
+function New-RunOnceCommand {
+    # Eintrag für HKCU\...\RunOnce: öffnet den Helfer einmal nach dem Neustart.
+    param([string]$ExePath, [string]$ScriptPath)
+    foreach ($p in @($ExePath, $ScriptPath)) { if ($p -and $p.Contains('"')) { throw 'Ungültiger Pfad' } }
+    if ($ExePath) { return ('"{0}"' -f $ExePath) }
+    if ($ScriptPath) { return ('powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $ScriptPath) }
+    return $null
+}
+
+function Format-DiagnosticsReport {
+    # Technischer Teil des Hilfe-Berichts – ohne persönliche Daten (keine Seriennummern, keine Namen).
+    param($AppleFacts, $ConnectFacts)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('--- Apple-Programme ---')
+    $lines.Add(('iTunes: {0} | Apple Mobile Device Support: {1}' -f (Get-PropValue $AppleFacts 'ITunesVersion'), (Get-PropValue $AppleFacts 'AmdsVersion')))
+    $lines.Add(('Dienst: vorhanden={0} Status={1} Start={2}' -f (Get-PropValue $AppleFacts 'ServiceExists'), (Get-PropValue $AppleFacts 'ServiceStatus'), (Get-PropValue $AppleFacts 'ServiceStartType')))
+    foreach ($app in @(Get-PropValue $AppleFacts 'StoreApps' | Where-Object { $null -ne $_ })) {
+        $lines.Add(('Store-App: {0} {1} ({2})' -f (Get-PropValue $app 'Name'), (Get-PropValue $app 'Version'), (Get-PropValue $app 'Kind')))
+    }
+    $lines.Add(('Diagnose Apple-Programm: {0}' -f (Get-PropValue (Get-AppleSoftwareDiagnosis $AppleFacts) 'Status')))
+    if ($null -ne $ConnectFacts) {
+        $lines.Add('--- iPhone-Verbindung ---')
+        $lines.Add(('Apple-Gerätedienst erreichbar: {0}, Geräte: {1}, Treiberdatei vorhanden: {2}' -f (Get-PropValue $ConnectFacts 'UsbmuxReachable'),
+                (Get-PropValue $ConnectFacts 'UsbmuxDeviceCount'), (Get-PropValue $ConnectFacts 'DriverInfPresent')))
+        foreach ($d in @(Get-PropValue $ConnectFacts 'PnpDevices' | Where-Object { $null -ne $_ })) {
+            $lines.Add(('USB: {0} | Status={1} Problem={2} | Treiber: {3} {4} {5}' -f (ConvertTo-SafeDeviceId (Get-PropValue $d 'DeviceId')),
+                    (Get-PropValue $d 'Status'), (Get-PropValue $d 'ProblemCode'), (Get-PropValue $d 'DriverProvider'),
+                    (Get-PropValue $d 'InfName'), (Get-PropValue $d 'DriverVersion')))
+        }
+        $lines.Add(('Diagnose Verbindung: {0}' -f (Get-PropValue (Get-ConnectDiagnosis $ConnectFacts) 'Kind')))
+    }
+    return , $lines.ToArray()
+}
+
 function Get-ScreenDefinition {
     # Texte und Knöpfe jedes Bildschirms. Alltagssprache, kurze Sätze, **fett** = genaue Knopf-Beschriftung.
     param([string]$Id, [string]$Mode = 'First')
@@ -555,7 +748,10 @@ function Get-ScreenDefinition {
             $d.Title = 'Whoop Plus aufs iPhone bringen'; $d.Icon = 'step-add'; $d.ShowProgress = $false
             $d.Body = "Ich führe dich Schritt für Schritt durch die Einrichtung.`nDu brauchst dein **iPhone**, das **Kabel** und deine **Apple-ID**.`nDas dauert etwa 20 Minuten."
             $d.Primary = "Los geht's"; $d.PrimaryAction = 'Mode:First'
-            $d.Links = @(@{ Text = 'Erweitert: alles von vorne einrichten'; Action = 'Mode:Full' })
+            $d.Links = @(
+                @{ Text = 'Mein iPhone wird am PC nicht erkannt'; Action = 'Mode:Diagnose' },
+                @{ Text = 'Erweitert: alles von vorne einrichten'; Action = 'Mode:Full' }
+            )
         }
         'Changed' {
             $d.Title = 'Hat sich etwas geändert?'; $d.Icon = 'step-question'; $d.ShowProgress = $false
@@ -565,6 +761,7 @@ function Get-ScreenDefinition {
                 @{ Text = 'Alles gut – nur prüfen'; Action = 'Mode:Check'; Main = $true },
                 @{ Text = 'SideStore öffnet nicht oder ist abgelaufen'; Action = 'Mode:Expired' },
                 @{ Text = 'Fehlermeldung zur Verbindung, z. B. nach einem iOS-Update'; Action = 'Mode:Pairing' },
+                @{ Text = 'Mein iPhone wird am PC nicht erkannt'; Action = 'Mode:Diagnose' },
                 @{ Text = 'Ich habe ein neues iPhone'; Action = 'Mode:NewPhone' }
             )
             $d.Links = @(@{ Text = 'Erweitert: alles von vorne einrichten'; Action = 'Mode:Full' })
@@ -579,6 +776,20 @@ function Get-ScreenDefinition {
             $d.Body = 'Damit dein PC das iPhone erkennt, braucht er ein kostenloses Programm von Apple.'
             $d.Note = 'Fragt Windows „Möchten Sie zulassen, dass …“? Dann auf **Ja** klicken.'
             $d.Primary = 'Weiter'
+        }
+        'AppleConflict' {
+            $d.Title = 'Zwei Apple-Programme stören sich'; $d.Icon = 'step-warn'; $d.OnEnter = 'ShowConflicts'
+            $d.Body = "Auf deinem PC sind Apps aus dem Microsoft Store, die iTunes stören (z. B. **Apple-Geräte**). Dann findet der PC das iPhone nicht.`nIch entferne sie, repariere iTunes und starte den PC einmal neu."
+            $d.Primary = 'Reparieren'; $d.PrimaryAction = 'RemoveConflicts'
+            $d.Secondary = @(
+                @{ Text = 'Selbst entfernen'; Action = 'OpenUrl:ms-settings:appsfeatures' },
+                @{ Text = 'Nochmal prüfen'; Action = 'Goto:AppleSoftware' }
+            )
+        }
+        'ConnectDone' {
+            $d.Title = 'Dein iPhone wird erkannt'; $d.Icon = 'step-done'
+            $d.Body = "Der PC findet dein iPhone jetzt.`nDu kannst iloader wieder benutzen."
+            $d.Primary = 'Schließen'; $d.PrimaryAction = 'Quit'
         }
         'VpnInstall' {
             $d.Title = 'App „LocalDevVPN“ laden'; $d.Icon = 'step-vpn'
@@ -796,29 +1007,6 @@ function Get-WindowsInfo {
     }
 }
 
-function Test-AppleSoftware {
-    # Apple Mobile Device Support: kommt mit iTunes oder der App „Apple-Geräte“.
-    $services = @(Get-Service -ErrorAction SilentlyContinue | Where-Object {
-            $_.Name -like 'Apple Mobile Device*' -or $_.Name -like 'AppleMobileDevice*' -or $_.DisplayName -like 'Apple Mobile Device*'
-        })
-    $packages = @()
-    if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) {
-        foreach ($name in @('AppleInc.AppleDevices', 'AppleInc.iTunes')) {
-            try { $packages += @(Get-AppxPackage -Name $name -ErrorAction Stop) } catch { $null = $_ }
-        }
-    }
-    $entries = @(Get-UninstallEntries | Where-Object { [string]$_.DisplayName -like 'Apple Mobile Device Support*' })
-    $running = @($services | Where-Object { $_.Status -eq 'Running' }).Count -gt 0
-    $source = @()
-    if ($entries.Count) { $source += 'iTunes' }
-    if ($packages.Count) { $source += @($packages | ForEach-Object { $_.Name }) }
-    return [pscustomobject]@{
-        Present        = ($services.Count -gt 0 -or $packages.Count -gt 0 -or $entries.Count -gt 0)
-        ServiceRunning = $running
-        Source         = ($source -join ', ')
-    }
-}
-
 function Find-Winget {
     $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $cmd) { return $cmd.Source }
@@ -882,6 +1070,7 @@ $script:DownloadScript = {
         $response = $request.GetResponse()
         try {
             $Progress.Total = [long]$response.ContentLength
+            $Progress.FinalUrl = [string]$response.ResponseUri
             $inStream = $response.GetResponseStream()
             $outStream = [System.IO.File]::Create($Path)
             try {
@@ -983,19 +1172,126 @@ function Get-UsbmuxDevices {
     finally { $client.Close() }
 }
 
+function Get-AppleSoftwareFacts {
+    # Was ist an Apple-Software da? (iTunes/Apple Mobile Device Support, Dienst, Store-Apps des Benutzers)
+    $entries = @(Get-UninstallEntries)
+    $itunes = $entries | Where-Object { [string]$_.DisplayName -eq 'iTunes' } | Select-Object -First 1
+    $amds = $entries | Where-Object { [string]$_.DisplayName -like 'Apple Mobile Device Support*' } | Select-Object -First 1
+    $service = Get-Service -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -like 'Apple Mobile Device*' -or $_.Name -like 'AppleMobileDevice*' -or $_.DisplayName -like 'Apple Mobile Device*'
+    } | Select-Object -First 1
+    $store = @()
+    if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) {
+        try {
+            $store = @(Get-AppxPackage -Name 'AppleInc.*' -ErrorAction Stop | ForEach-Object {
+                    [pscustomobject]@{ Name = [string]$_.Name; Version = [string]$_.Version; Kind = (Get-AppleStoreAppKind $_.Name) }
+                } | Where-Object { $_.Kind -ne 'Other' })
+        }
+        catch { $null = $_ }
+    }
+    $serviceName = $null; $status = ''; $startType = ''
+    if ($null -ne $service) {
+        $serviceName = [string]$service.Name
+        $status = [string]$service.Status
+        try { $startType = [string]$service.StartType } catch { $startType = '' }
+    }
+    return [pscustomobject]@{
+        ITunesVersion    = [string](Get-PropValue $itunes 'DisplayVersion')
+        AmdsVersion      = [string](Get-PropValue $amds 'DisplayVersion')
+        ServiceExists    = ($null -ne $service)
+        ServiceName      = $serviceName
+        ServiceStatus    = $status
+        ServiceStartType = $startType
+        StoreApps        = $store
+    }
+}
+
+function Test-AppleSoftware {
+    # Fakten + Bewertung. Present = nutzbar (Status Ok).
+    $facts = Get-AppleSoftwareFacts
+    $diagnosis = Get-AppleSoftwareDiagnosis $facts
+    $source = @()
+    if ($facts.ITunesVersion) { $source += "iTunes $($facts.ITunesVersion)" }
+    $source += @($facts.StoreApps | ForEach-Object { $_.Name })
+    return [pscustomobject]@{
+        Present        = ($diagnosis.Status -eq 'Ok')
+        Status         = $diagnosis.Status
+        Diagnosis      = $diagnosis
+        Facts          = $facts
+        ServiceRunning = ($facts.ServiceStatus -eq 'Running')
+        Source         = ($source -join ', ')
+    }
+}
+
+function Get-AppleDriverInfPath {
+    # Apples USB-Treiber liegt bei iTunes unter „Common Files\Apple\Mobile Device Support\Drivers“.
+    $base = $env:CommonProgramW6432
+    if (-not $base) { $base = $env:CommonProgramFiles }
+    if (-not $base) { return $null }
+    return (Join-Path $base 'Apple\Mobile Device Support\Drivers\usbaapl64.inf')
+}
+
+function Get-ApplePnpDevices {
+    # iPhone/iPad als USB-Gerät inkl. Problemcode und aktivem Treiber (ohne Seriennummer).
+    $devices = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPDeviceID LIKE 'USB%VID_05AC%'" -ErrorAction Stop |
+            Where-Object { (Test-IsAppleMobileDeviceId $_.PNPDeviceID) -and ((Get-PropValue $_ 'Present') -ne $false) })
+    if ($devices.Count -eq 0) { return @() }
+    $drivers = @()
+    try { $drivers = @(Get-CimInstance -ClassName Win32_PnPSignedDriver -Filter "DeviceID LIKE 'USB%VID_05AC%'" -ErrorAction Stop) } catch { $null = $_ }
+    foreach ($d in $devices) {
+        $drv = $drivers | Where-Object { $_.DeviceID -eq $d.PNPDeviceID } | Select-Object -First 1
+        [pscustomobject]@{
+            DeviceId       = ConvertTo-SafeDeviceId $d.PNPDeviceID
+            Name           = [string]$d.Name
+            Status         = [string]$d.Status
+            ProblemCode    = [int](Get-PropValue $d 'ConfigManagerErrorCode')
+            DriverProvider = [string](Get-PropValue $drv 'DriverProviderName')
+            InfName        = [string](Get-PropValue $drv 'InfName')
+            DriverVersion  = [string](Get-PropValue $drv 'DriverVersion')
+        }
+    }
+}
+
+function Get-ConnectFacts {
+    # Alles, was Get-ConnectDiagnosis braucht (läuft im Hintergrund, kann ein paar Sekunden dauern).
+    $reachable = $false; $count = 0
+    try {
+        $count = @(Get-UsbmuxDevices | Where-Object { $_.ConnectionType -eq 'USB' }).Count
+        $reachable = $true
+    }
+    catch { $null = $_ }
+    $pnp = @()
+    try { $pnp = @(Get-ApplePnpDevices) } catch { $null = $_ }
+    $inf = Get-AppleDriverInfPath
+    return [pscustomobject]@{
+        UsbmuxReachable   = $reachable
+        UsbmuxDeviceCount = $count
+        PnpDevices        = $pnp
+        Apple             = (Test-AppleSoftware)
+        DriverInfPresent  = [bool]($inf -and (Test-Path -LiteralPath $inf))
+    }
+}
+
 function Test-IPhoneConnected {
+    # Erfolg NUR, wenn der Apple-Gerätedienst (usbmuxd) das iPhone meldet – das braucht iloader.
+    # PnpSeen: Windows sieht ein iPhone am USB (dann lohnt sich die Fehlersuche).
+    $reachable = $false; $usbCount = 0
     try {
-        $usb = @(Get-UsbmuxDevices | Where-Object { $_.ConnectionType -eq 'USB' })
-        if ($usb.Count -gt 0) { return [pscustomobject]@{ Connected = $true; Via = 'usbmux'; Count = $usb.Count } }
+        $usbCount = @(Get-UsbmuxDevices | Where-Object { $_.ConnectionType -eq 'USB' }).Count
+        $reachable = $true
     }
     catch { $null = $_ }
-    try {
-        $pnp = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPDeviceID LIKE 'USB%VID_05AC%'" -ErrorAction Stop |
-                Where-Object { (Test-IsAppleMobileDeviceId $_.PNPDeviceID) -and ((Get-PropValue $_ 'Present') -ne $false) })
-        if ($pnp.Count -gt 0) { return [pscustomobject]@{ Connected = $true; Via = 'pnp'; Count = $pnp.Count } }
+    $pnpSeen = $false
+    if ($usbCount -eq 0) {
+        try {
+            $pnpSeen = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPDeviceID LIKE 'USB%VID_05AC%'" -ErrorAction Stop |
+                    Where-Object { (Test-IsAppleMobileDeviceId $_.PNPDeviceID) -and ((Get-PropValue $_ 'Present') -ne $false) }).Count -gt 0
+        }
+        catch { $null = $_ }
     }
-    catch { $null = $_ }
-    return [pscustomobject]@{ Connected = $false; Via = ''; Count = 0 }
+    $via = ''
+    if ($usbCount -gt 0) { $via = 'usbmux' } elseif ($pnpSeen) { $via = 'pnp' }
+    return [pscustomobject]@{ Connected = ($usbCount -gt 0); Via = $via; Count = $usbCount; PnpSeen = $pnpSeen; UsbmuxReachable = $reachable }
 }
 
 function Get-Win32ErrorCode {
@@ -1018,12 +1314,13 @@ function Test-IsUserCancelled {
 function Start-InstallerProcess {
     # Startet ein Installationsprogramm. Mit -Elevated über die Windows-Abfrage (Verb „runas“);
     # lehnt man sie ab, wirft Process.Start eine Win32Exception 1223 (siehe Test-IsUserCancelled).
-    param([string]$FileName, [string]$Arguments, [switch]$Elevated)
+    param([string]$FileName, [string]$Arguments, [switch]$Elevated, [switch]$Hidden)
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $FileName
     $psi.Arguments = $Arguments
     $psi.UseShellExecute = $true
     if ($Elevated) { $psi.Verb = 'runas' }
+    if ($Hidden) { $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden }
     return [System.Diagnostics.Process]::Start($psi)
 }
 
@@ -1064,7 +1361,9 @@ $script:CheckFunctions = @(
     'Get-PropValue', 'ConvertTo-VersionObject', 'Test-IsAppleMobileDeviceId', 'New-UsbmuxListDevicesPlist', 'New-UsbmuxPlistPacket',
     'ConvertFrom-UsbmuxHeader', 'ConvertFrom-PlistNode', 'ConvertFrom-PlistXml', 'Get-UsbmuxDeviceList', 'Read-StreamExact',
     'Get-UsbmuxDevices', 'Test-IPhoneConnected', 'Get-UninstallEntries', 'Test-AppleSoftware', 'Find-ILoaderInstall',
-    'Get-ILoaderCandidatePaths', 'Get-InstalledILoader'
+    'Get-ILoaderCandidatePaths', 'Get-InstalledILoader', 'Get-AppleStoreAppKind', 'Get-AppleStoreAppLabel',
+    'Get-AppleSoftwareFacts', 'Get-AppleSoftwareDiagnosis', 'ConvertTo-SafeDeviceId', 'Get-ApplePnpDevices',
+    'Get-AppleDriverInfPath', 'Get-ConnectFacts'
 )
 $script:CheckRunspace = $null
 $script:CheckRunspaceBusy = $false
@@ -1127,7 +1426,7 @@ function Invoke-InBackground {
 
 function Invoke-Check {
     # Eine der Prüf-Funktionen im Hintergrund ausführen (z. B. 'Test-IPhoneConnected').
-    param([ValidateSet('Test-IPhoneConnected', 'Test-AppleSoftware', 'Get-InstalledILoader')][string]$Name)
+    param([ValidateSet('Test-IPhoneConnected', 'Test-AppleSoftware', 'Get-InstalledILoader', 'Get-ConnectFacts')][string]$Name)
     return (Invoke-InBackground -ScriptBlock ([scriptblock]::Create($Name)) -Shared)
 }
 
@@ -1444,6 +1743,10 @@ $script:CurrentId = $null
 $script:ScreenTimers = New-Object System.Collections.ArrayList
 $script:Facts = @{}
 $script:Scale = 1.0
+$script:Modes = @('First', 'Full', 'NewPhone', 'Check', 'Expired', 'Pairing', 'Diagnose')
+$script:AppleConflicts = @()
+$script:FreshAppleInstall = $false
+$script:ConnectNote = $null
 
 function Initialize-UiAssemblies {
     Add-Type -AssemblyName System.Windows.Forms
@@ -1887,9 +2190,9 @@ function Show-Problem {
 }
 
 function Start-Mode {
-    param([string]$Mode)
+    param([string]$Mode, [string]$ResumeAt)
     $script:Mode = $Mode
-    if ($Mode -in @('Full', 'NewPhone')) {
+    if ($Mode -in @('Full', 'NewPhone') -and -not $ResumeAt) {
         # Einmalige iPhone-Schritte gelten für ein neues iPhone nicht mehr.
         $keepCompleted = $script:State.CompletedAt
         $script:State = ConvertTo-SetupState $null
@@ -1899,7 +2202,7 @@ function Start-Mode {
     Save-SetupState $script:State
     $script:Plan = Get-SetupPlan -Mode $Mode -State $script:State
     Write-SetupLog ("Modus {0}: {1}" -f $Mode, ($script:Plan -join ', '))
-    Enter-Screen 0
+    Enter-Screen (Get-ResumeIndex -Plan $script:Plan -Step $ResumeAt)
 }
 
 function Enter-Screen {
@@ -1923,6 +2226,19 @@ function Show-StartScreen {
     $script:Index = -1
     $script:Plan = @()
     $script:CurrentId = 'Start'
+    if ($script:State.ResumeStep -and $script:State.ResumeMode) {
+        # Nach einem Neustart: beim gemerkten Schritt weitermachen (nur einmal).
+        $mode = [string]$script:State.ResumeMode
+        $step = [string]$script:State.ResumeStep
+        $script:State.ResumeStep = $null
+        $script:State.ResumeMode = $null
+        Save-SetupState $script:State
+        if ($mode -in $script:Modes) {
+            Write-SetupLog "Weiter nach dem Neustart: $mode / $step"
+            Start-Mode $mode -ResumeAt $step
+            return
+        }
+    }
     if ($script:State.CompletedAt) { Show-Screen (Get-ScreenDefinition 'Changed') }
     else { Show-Screen (Get-ScreenDefinition 'Welcome') }
 }
@@ -1965,6 +2281,17 @@ function Invoke-UiAction {
             }
             'StartILoader' { Start-ILoaderApp }
             'InstallApple' { Install-AppleSoftwareUi }
+            'RepairApple' { Repair-AppleSoftwareUi }
+            'FixApple' { Add-AppleSoftwareStep }
+            'RemoveConflicts' { Remove-AppleConflictsUi }
+            'ShowConflicts' { Show-AppleConflicts }
+            'StartAppleService' { Start-AppleServiceUi }
+            'InstallAppleDriver' { Install-AppleDriverUi }
+            'Restart' {
+                $step = $arg
+                if (-not $step) { $step = $script:CurrentId }
+                Request-PcRestart -ResumeStep $step
+            }
             'SideStoreNotOpening' {
                 $script:Plan = Add-PlanStepsBefore -Plan $script:Plan -Index $script:Index -Steps @('PhoneTrust', 'DevMode')
                 Write-SetupLog ("SideStore öffnet nicht -> Plan: {0}" -f ($script:Plan -join ', '))
@@ -2007,9 +2334,15 @@ function Copy-HelpReport {
         "Whoop Plus Einrichtungshelfer $($script:HelperVersion)",
         "Zeit: $(Get-Date -Format 's')",
         "Modus: $($script:Mode) / Schritt: $($script:CurrentId)",
-        "Windows: $(($script:Facts['Windows'] | Out-String).Trim())",
-        '--- Bericht (letzte Zeilen) ---'
+        "Windows: $(($script:Facts['Windows'] | Out-String).Trim())"
     )
+    # Apple-Programme, Dienst, USB-Gerät und Treiber – ohne persönliche Daten (keine Seriennummern).
+    try {
+        $facts = Invoke-Check 'Get-ConnectFacts'
+        $lines += (Format-DiagnosticsReport $facts.Apple.Facts $facts)
+    }
+    catch { $lines += "(Diagnose nicht möglich: $($_.Exception.Message))" }
+    $lines += '--- Bericht (letzte Zeilen) ---'
     try { $lines += @(Get-Content -LiteralPath (Get-LogPath) -Tail 250 -Encoding UTF8 -ErrorAction Stop) } catch { $lines += '(kein Bericht)' }
     $ok = Set-ClipboardText ($lines -join "`r`n")
     if ($ok) {
@@ -2085,81 +2418,398 @@ function Invoke-AutoWindows {
 function Invoke-AutoAppleSoftware {
     Set-Status 'busy' 'Ich schaue nach …'
     $apple = Invoke-Check 'Test-AppleSoftware'
-    Write-SetupLog ("Apple-Programm: vorhanden={0} läuft={1} ({2})" -f $apple.Present, $apple.ServiceRunning, $apple.Source)
-    if ($apple.Present) {
-        Complete-AutoStep 'Das Apple-Programm ist schon da.'
-        return
-    }
-    Set-Busy $false
-    Set-Status 'info' 'Das Programm fehlt noch. Klicke auf **Installieren**.'
-    Set-PrimaryButton 'Installieren' 'InstallApple'
+    Write-SetupLog ("Apple-Programm: {0} ({1}); Dienst={2}/{3}" -f $apple.Status, $apple.Source, $apple.Facts.ServiceExists, $apple.Facts.ServiceStatus)
+    Show-AppleSoftwareResult $apple
 }
 
-function Wait-AppleSoftware {
-    # Wartet (ohne das Fenster zu blockieren), bis das Apple-Programm erkannt wird.
-    param([int]$TimeoutMs)
-    $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($watch.ElapsedMilliseconds -lt $TimeoutMs -and -not $script:Closing) {
-        if ((Invoke-Check 'Test-AppleSoftware').Present) { return $true }
-        $null = Wait-UiCondition -Until { $false } -TimeoutMs 1500 -IntervalMs 100
+function Show-AppleSoftwareResult {
+    # Zeigt je nach Bewertung den passenden nächsten Schritt.
+    param($Apple, [switch]$AfterInstall)
+    $diag = $Apple.Diagnosis
+    switch ($Apple.Status) {
+        'Ok' {
+            $script:AppleConflicts = @()
+            if ($AfterInstall) { Complete-AutoStep 'Das Apple-Programm ist installiert.' }
+            else { Complete-AutoStep 'Das Apple-Programm ist schon da.' }
+        }
+        'Conflict' {
+            $script:AppleConflicts = @($diag.Conflicts)
+            Write-SetupLog ("Konflikt: {0}" -f (($script:AppleConflicts | ForEach-Object { $_.Name }) -join ', ')) 'WARN'
+            $script:Plan = Add-PlanStepsBefore -Plan $script:Plan -Index ($script:Index + 1) -Steps @('AppleConflict')
+            Move-Next
+        }
+        'ServiceStopped' {
+            Set-Busy $false
+            Set-Status 'warn' ($diag.Message + "`n" + $diag.Action)
+            Set-PrimaryButton 'Dienst starten' 'StartAppleService'
+            Set-SecondaryButtons @(@{ Text = 'Nochmal prüfen'; Action = 'Retry' })
+        }
+        'Broken' {
+            # iTunes da, aber Apple Mobile Device Support/Dienst fehlt (z. B. nach dem Entfernen von „Apple-Geräte“).
+            Set-Busy $false
+            Set-Status 'warn' ($diag.Message + "`n" + $diag.Action)
+            Set-PrimaryButton 'Reparieren' 'RepairApple'
+            Set-SecondaryButtons @(@{ Text = 'Nochmal prüfen'; Action = 'Retry' })
+        }
+        default {
+            Set-Busy $false
+            Set-Status 'info' 'Das Programm fehlt noch. Klicke auf **Installieren**.'
+            Set-PrimaryButton 'Installieren' 'InstallApple'
+        }
     }
-    return $false
+}
+
+function Wait-AppleReady {
+    # Nach der Installation bis zu $TimeoutMs warten: iTunes richtet den Apple-Dienst erst nach einer Weile ein.
+    param([int]$TimeoutMs = 60000)
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $apple = $null
+    while (-not $script:Closing) {
+        $apple = Invoke-Check 'Test-AppleSoftware'
+        if ($apple.Status -in @('Ok', 'Conflict')) { return $apple }
+        if ($watch.ElapsedMilliseconds -ge $TimeoutMs) { break }
+        $null = Wait-UiCondition -Until { $false } -TimeoutMs 2000 -IntervalMs 100
+    }
+    return $apple
+}
+
+function Invoke-ITunesWinget {
+    # winget installiert Apples offizielles iTunes64Setup.exe. -Repair = erneut installieren (--force).
+    param([string]$Winget, [switch]$Repair)
+    $progress = [hashtable]::Synchronized(@{ Line = '' })
+    try {
+        $result = Invoke-InBackground -ScriptBlock $script:RunProcessScript -ArgumentList @($Winget, (Get-WingetArguments -Force:$Repair), $progress) -OnTick {
+            if ($progress.Line -match '(\d{1,3})\s*%') { Set-ActivityProgress ([int]$Matches[1]) }
+        }
+        $kind = Get-WingetResultKind ([int]$result.ExitCode)
+        Write-SetupLog ("winget iTunes (Reparatur={0}): Exit {1} ({2})`n{3}" -f [bool]$Repair, $result.ExitCode, $kind, $result.Output)
+        return $kind
+    }
+    catch {
+        Write-SetupLog ("winget iTunes fehlgeschlagen: {0}" -f $_.Exception.Message) 'WARN'
+        return 'Failed'
+    }
+}
+
+function Install-ITunesDirect {
+    # Ersatzweg ohne winget: iTunes64Setup.exe direkt von Apple laden, Apple-Signatur prüfen, still installieren.
+    $target = Join-Path (Get-DownloadDir) 'iTunes64Setup.exe'
+    $partial = $target + '.part'
+    $progress = [hashtable]::Synchronized(@{ Done = 0L; Total = 0L; Cancel = $false; FinalUrl = '' })
+    Set-Status 'busy' 'iTunes wird von Apple geladen …'
+    try {
+        $null = Invoke-InBackground -ScriptBlock $script:DownloadScript -ArgumentList @($script:Config.ITunesDownloadUrl, $partial, $progress, $script:Config.UserAgent) -OnTick {
+            if ($script:Closing) { $progress.Cancel = $true }
+            if ([long]$progress.Total -gt 0) {
+                Set-ActivityProgress ([int](100 * $progress.Done / $progress.Total))
+                Set-RichText $script:Ui.StatusText ("iTunes wird von Apple geladen … {0} von {1}" -f (Format-ByteSize $progress.Done), (Format-ByteSize $progress.Total))
+            }
+        }
+    }
+    catch {
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+        Write-SetupLog "iTunes-Download fehlgeschlagen: $($_.Exception.Message)" 'WARN'
+        return 'Failed'
+    }
+    if (-not (Test-AppleDownloadUrl ([string]$progress.FinalUrl))) {
+        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+        Write-SetupLog "iTunes-Download von unerwarteter Adresse: $($progress.FinalUrl)" 'ERROR'
+        return 'Untrusted'
+    }
+    Move-Item -LiteralPath $partial -Destination $target -Force
+    $sig = Get-AuthenticodeSignature -FilePath $target
+    $subject = ''
+    if ($null -ne $sig.SignerCertificate) { $subject = [string]$sig.SignerCertificate.Subject }
+    Write-SetupLog "iTunes-Installationsprogramm: $($progress.FinalUrl), Signatur $($sig.Status) ($subject)"
+    if (-not (Test-AppleAuthenticode -Status ([string]$sig.Status) -Subject $subject)) {
+        Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+        return 'Untrusted'
+    }
+    Set-Status 'busy' "iTunes wird installiert …`nFragt Windows `„Möchten Sie zulassen …`“? Dann auf **Ja** klicken."
+    $result = Wait-ElevatedProcess -FileName $target -Arguments '/quiet DESKTOP_SHORTCUTS=0'
+    Write-SetupLog "iTunes64Setup.exe: $result"
+    if ($result -in @('Cancelled', 'Failed', 'Unknown')) { return $result }
+    if ((Get-MsiResultKind ([int]$result)) -eq 'Success') { return 'Success' }
+    return 'Failed'
+}
+
+function Invoke-ITunesInstall {
+    # Nur iTunes von Apple: zuerst winget (Apple.iTunes), sonst Apples Installationsprogramm direkt.
+    # Nach einem Erfolg wird NIE noch ein anderer Weg installiert.
+    param([switch]$Repair)
+    $winget = Find-Winget
+    $methods = Get-AppleInstallMethods -WingetAvailable ([bool]$winget)
+    Write-SetupLog ("iTunes {0}, Wege: {1} (winget: {2})" -f $(if ($Repair) { 'reparieren' } else { 'installieren' }), ($methods -join ', '), $winget)
+    $verb = 'installiert'
+    if ($Repair) { $verb = 'repariert (neu installiert)' }
+    foreach ($method in $methods) {
+        if ($script:Closing) { return 'Failed' }
+        if ($method -eq 'ITunesWinget') {
+            Set-Status 'busy' "iTunes wird $verb …`nDas kann ein paar Minuten dauern. Fragt Windows `„Möchten Sie zulassen …`“? Dann auf **Ja** klicken."
+            $step = Get-NextInstallStep (Invoke-ITunesWinget -Winget $winget -Repair:$Repair)
+            if ($step -eq 'Verify') { return 'Success' }
+            if ($step -eq 'Problem') { return 'HashMismatch' }
+        }
+        elseif ($method -eq 'ITunesDirect') {
+            $kind = Install-ITunesDirect
+            if ($kind -in @('Success', 'Cancelled')) { return $kind }
+        }
+    }
+    return 'Failed'
 }
 
 function Install-AppleSoftwareUi {
-    $token = $script:ScreenToken
     Set-Busy $true
-    $winget = Find-Winget
-    $isWin11 = [bool]$script:Facts['IsWindows11']
-    $methods = Get-AppleInstallMethods -IsWindows11 $isWin11 -WingetAvailable ([bool]$winget)
-    Write-SetupLog ("Apple-Programm installieren, Wege: {0} (winget: {1})" -f ($methods -join ', '), $winget)
-    foreach ($method in $methods) {
-        if ($token -ne $script:ScreenToken -or $script:Closing) { return }
-        if ($method -eq 'Manual') { Show-AppleManualInstall; return }
-        $label = 'iTunes'
-        if ($method -eq 'AppleDevicesStore') { $label = '„Apple-Geräte“' }
-        Set-Status 'busy' "Das Apple-Programm ($label) wird installiert …`nDas kann ein paar Minuten dauern."
-        $progress = [hashtable]::Synchronized(@{ Line = '' })
-        try {
-            $result = Invoke-InBackground -ScriptBlock $script:RunProcessScript -ArgumentList @($winget, (Get-WingetArguments $method), $progress) -OnTick {
-                if ($progress.Line -match '(\d{1,3})\s*%') { Set-ActivityProgress ([int]$Matches[1]) }
-            }
-            $kind = Get-WingetResultKind ([int]$result.ExitCode)
-            Write-SetupLog ("winget {0}: Exit {1} ({2})`n{3}" -f $method, $result.ExitCode, $kind, $result.Output)
+    $kind = Invoke-ITunesInstall
+    switch ($kind) {
+        'Success' { Complete-AppleInstall }
+        'HashMismatch' { Show-Problem -Text 'Download beschädigt.' -Action 'Bitte klicke auf **Nochmal versuchen**.' }
+        'Cancelled' { Show-Problem -Text 'Die Installation wurde abgebrochen.' -Action 'Klicke auf **Nochmal versuchen** und dann bei Windows auf **Ja**.' }
+        default {
+            $now = Invoke-Check 'Test-AppleSoftware'
+            if ($now.Status -ne 'Missing') { Show-AppleSoftwareResult $now -AfterInstall }
+            else { Show-AppleManualInstall }
         }
-        catch { $kind = 'Failed'; Write-SetupLog ("winget {0} fehlgeschlagen: {1}" -f $method, $_.Exception.Message) 'WARN' }
-        Set-Status 'busy' 'Ich prüfe die Installation …'
-        if (Wait-AppleSoftware -TimeoutMs 30000) {
-            Complete-AutoStep 'Das Apple-Programm ist installiert.'
-            return
-        }
-        if ($kind -eq 'HashMismatch') {
-            # Beschädigter Download: kein anderer Weg, sondern einfach erneut versuchen lassen.
-            Show-Problem -Text 'Download beschädigt.' -Action 'Bitte klicke auf **Nochmal versuchen**.'
-            return
+    }
+}
+
+function Repair-AppleSoftwareUi {
+    # iTunes neu installieren (repariert Apple Mobile Device Support), danach Neustart mit Weitermachen.
+    Set-Busy $true
+    $kind = Invoke-ITunesInstall -Repair
+    Write-SetupLog "iTunes-Reparatur: $kind"
+    if ($kind -ne 'Success') {
+        Show-Problem -Text 'Die Reparatur hat nicht geklappt.' -Action 'Klicke auf **Nochmal versuchen**. Hilft das nicht: iTunes von Apple selbst laden und installieren.'
+        Set-PrimaryButton 'Nochmal versuchen' 'RepairApple'
+        Set-SecondaryButtons @(@{ Text = 'iTunes-Seite öffnen'; Action = 'OpenUrl:' + $script:Config.ITunesDownloadUrl })
+        return
+    }
+    $resume = $script:CurrentId
+    if ($script:Plan -contains 'AppleSoftware') { $resume = 'AppleSoftware' }
+    Set-Busy $false
+    Set-Status 'ok' "iTunes ist repariert. Jetzt muss der PC einmal neu starten.`nDanach öffnet sich dieser Helfer von selbst und macht weiter."
+    Set-PrimaryButton 'PC jetzt neu starten' ('Restart:' + $resume)
+    Set-SecondaryButtons @()
+}
+
+function Complete-AppleInstall {
+    Set-Status 'busy' 'Ich warte, bis iTunes bereit ist (bis zu 1 Minute) …'
+    $apple = Wait-AppleReady -TimeoutMs 60000
+    Write-SetupLog ("Nach der Installation: {0} ({1}); Dienst={2}/{3}" -f $apple.Status, $apple.Source, $apple.Facts.ServiceExists, $apple.Facts.ServiceStatus)
+    $script:FreshAppleInstall = $true
+    switch ($apple.Status) {
+        'Ok' { Show-AppleSoftwareResult $apple -AfterInstall }
+        'Conflict' { Show-AppleSoftwareResult $apple -AfterInstall }
+        'ServiceStopped' { Start-AppleServiceUi }
+        default {
+            # Installiert, aber Dienst noch nicht da: Windows braucht einen Neustart.
+            Set-Busy $false
+            Set-Status 'warn' "iTunes ist installiert, aber Windows braucht einen Neustart.`nDanach mache ich hier von selbst weiter."
+            Set-PrimaryButton 'PC jetzt neu starten' 'Restart'
+            Set-SecondaryButtons @(@{ Text = 'Nochmal prüfen'; Action = 'Retry' })
         }
     }
 }
 
 function Show-AppleManualInstall {
-    # Ohne automatische Installation: Apple-Download im Browser öffnen und warten, bis das Programm da ist.
+    # Letzter Ausweg: Apples iTunes-Download im Browser öffnen und warten, bis das Programm da ist.
     Open-Url $script:Config.ITunesDownloadUrl
     Set-Busy $false
     Set-Status 'info' "Im Browser wird jetzt **iTunes** von Apple geladen.`nÖffne die Datei und klicke dich mit **Weiter** durch. Ich warte hier."
     Set-PrimaryButton 'Nochmal prüfen' 'Retry'
-    Set-SecondaryButtons @(@{ Text = 'Apple-Geräte (Microsoft Store)'; Action = 'OpenUrl:' + $script:Config.AppleDevicesStoreUrl })
+    Set-SecondaryButtons @()
     Start-ScreenTimer -IntervalMs 3000 -Action {
-        if ((Invoke-Check 'Test-AppleSoftware').Present) {
+        $apple = Invoke-Check 'Test-AppleSoftware'
+        if ($apple.Status -ne 'Missing') {
             Stop-ScreenTimers
-            Write-SetupLog 'Apple-Programm nach manueller Installation gefunden'
-            Complete-AutoStep 'Das Apple-Programm ist installiert.'
+            Write-SetupLog "Apple-Programm nach manueller Installation: $($apple.Status)"
+            $script:FreshAppleInstall = $true
+            Show-AppleSoftwareResult $apple -AfterInstall
         }
     }
+}
+
+function Show-AppleConflicts {
+    # Beim Bildschirm „Zwei Apple-Programme stören sich“: was genau gefunden wurde.
+    $found = @($script:AppleConflicts | Where-Object { $null -ne $_ })
+    if ($found.Count -eq 0) { Move-Next; return }
+    $labels = ($found | ForEach-Object { '**' + (Get-AppleStoreAppLabel $_.Kind) + '**' }) -join ', '
+    Set-RichText $script:Ui.Note ("Gefunden: $labels (aus dem Microsoft Store).")
+    Update-UiWidths
+}
+
+function Confirm-Action {
+    param([string]$Text, [string]$Title = 'Whoop Plus Einrichtungshelfer')
+    $answer = [System.Windows.Forms.MessageBox]::Show($script:Ui.Form, $Text, $Title,
+        [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+    return ($answer -eq [System.Windows.Forms.DialogResult]::Yes)
+}
+
+$script:RemoveAppxScript = {
+    # Entfernt Store-Apps nur für den aktuellen Benutzer (kein Administrator nötig).
+    param([string[]]$Names)
+    $ErrorActionPreference = 'Stop'
+    foreach ($name in $Names) {
+        Get-AppxPackage -Name $name | Remove-AppxPackage
+    }
+    'ok'
+}
+
+function Remove-AppleConflictsUi {
+    $found = @($script:AppleConflicts | Where-Object { $null -ne $_ -and [string]$_.Name -match '^AppleInc\.[A-Za-z0-9]+$' })
+    if ($found.Count -eq 0) { Move-Next; return }
+    $labels = ($found | ForEach-Object { Get-AppleStoreAppLabel $_.Kind }) -join ', '
+    if (-not (Confirm-Action "Ich entferne jetzt: $labels.`n`nDanach repariere ich iTunes, und der PC startet einmal neu.`n`nFortfahren?")) { return }
+    Set-Busy $true
+    Set-Status 'busy' "Ich entferne $labels …"
+    try {
+        $null = Invoke-InBackground -ScriptBlock $script:RemoveAppxScript -ArgumentList @(, [string[]]@($found | ForEach-Object { $_.Name }))
+    }
+    catch { Write-SetupLog "Entfernen fehlgeschlagen: $($_.Exception.Message)" 'ERROR' }
+    $apple = Invoke-Check 'Test-AppleSoftware'
+    Write-SetupLog "Nach dem Entfernen: $($apple.Status) ($($apple.Source))"
+    if ($apple.Status -eq 'Conflict') {
+        Show-Problem -Text 'Ich konnte die App nicht entfernen.' -Action ("Klicke auf **Selbst entfernen** und deinstalliere **$labels**. Danach den PC neu starten.")
+        Set-PrimaryButton 'Selbst entfernen' 'OpenUrl:ms-settings:appsfeatures'
+        return
+    }
+    $script:AppleConflicts = @()
+    # Das Entfernen nimmt Teile von iTunes mit (Apple Mobile Device Support) – deshalb iTunes gleich reparieren.
+    Repair-AppleSoftwareUi
+}
+
+function Get-SystemToolPath {
+    # Programme aus C:\Windows\System32 (auch aus einem 32-Bit-Prozess heraus das echte System32).
+    param([string]$Name)
+    $root = $env:SystemRoot
+    if (-not $root) { $root = 'C:\Windows' }
+    $dir = 'System32'
+    if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { $dir = 'Sysnative' }
+    return (Join-Path (Join-Path $root $dir) $Name)
+}
+
+function Wait-ElevatedProcess {
+    # Startet ein Programm mit Windows-Abfrage und wartet. Ergebnis: Exitcode, 'Cancelled' oder 'Failed'.
+    param([string]$FileName, [string]$Arguments)
+    try { $process = Start-InstallerProcess -FileName $FileName -Arguments $Arguments -Elevated -Hidden }
+    catch {
+        if (Test-IsUserCancelled $_.Exception) { Write-SetupLog 'Windows-Abfrage abgelehnt' 'WARN'; return 'Cancelled' }
+        Write-SetupLog "Start fehlgeschlagen ($FileName): $($_.Exception.Message)" 'ERROR'
+        return 'Failed'
+    }
+    if ($null -eq $process) { return 'Failed' }
+    $null = Wait-UiCondition -Until { $process.HasExited } -IntervalMs 200
+    try { return [string]$process.ExitCode } catch { return 'Unknown' }
+}
+
+function Start-AppleServiceUi {
+    Set-Busy $true
+    Set-Status 'busy' "Ich starte den Apple-Dienst …`nFragt Windows `„Möchten Sie zulassen …`“? Dann auf **Ja** klicken."
+    $apple = Invoke-Check 'Test-AppleSoftware'
+    $name = [string]$apple.Facts.ServiceName
+    if (-not $name) {
+        Show-Problem -Text 'Der Apple-Dienst fehlt noch.' -Action 'Bitte starte den PC neu. Danach mache ich hier von selbst weiter.'
+        Set-PrimaryButton 'PC jetzt neu starten' 'Restart'
+        return
+    }
+    $result = Wait-ElevatedProcess -FileName (Get-SystemToolPath 'cmd.exe') -Arguments (New-ServiceStartArguments $name)
+    Write-SetupLog "Dienst starten ($name): $result"
+    if ($result -eq 'Cancelled') {
+        Show-Problem -Text 'Der Dienst wurde nicht gestartet.' -Action 'Klicke auf **Nochmal versuchen** und dann bei Windows auf **Ja**.'
+        Set-PrimaryButton 'Nochmal versuchen' 'StartAppleService'
+        return
+    }
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($watch.ElapsedMilliseconds -lt 15000 -and -not $script:Closing) {
+        $apple = Invoke-Check 'Test-AppleSoftware'
+        if ($apple.Facts.ServiceStatus -eq 'Running') {
+            Set-Busy $false
+            Set-Status 'ok' 'Der Apple-Dienst läuft.'
+            Invoke-Later 1200 { Enter-Screen $script:Index }
+            return
+        }
+        $null = Wait-UiCondition -Until { $false } -TimeoutMs 1500 -IntervalMs 100
+    }
+    Show-Problem -Text 'Der Apple-Dienst startet nicht.' -Action 'Bitte starte den PC neu. Danach mache ich hier von selbst weiter.'
+    Set-PrimaryButton 'PC jetzt neu starten' 'Restart'
+}
+
+function Install-AppleDriverUi {
+    $inf = Get-AppleDriverInfPath
+    if (-not $inf -or -not (Test-Path -LiteralPath $inf)) {
+        Write-SetupLog "Treiberdatei fehlt: $inf" 'WARN'
+        Show-Problem -Text 'Auf dem PC fehlt das Apple-Teil für die Kabelverbindung.' -Action 'Klicke auf **Apple-Programm reparieren**.'
+        Set-PrimaryButton 'Apple-Programm reparieren' 'FixApple'
+        return
+    }
+    $ok = Confirm-Action ("Ich richte jetzt Apples Teil für die iPhone-Kabelverbindung ein (aus iTunes).`n`n" +
+        "Windows fragt danach, ob das Programm Änderungen vornehmen darf – bitte auf `„Ja`“ klicken.`n`nFortfahren?")
+    if (-not $ok) { return }
+    Set-Busy $true
+    Set-Status 'busy' 'Ich richte die Kabelverbindung ein …'
+    $result = Wait-ElevatedProcess -FileName (Get-SystemToolPath 'pnputil.exe') -Arguments ('/add-driver "{0}" /install' -f $inf)
+    Write-SetupLog "Treiber installieren ($inf): $result"
+    if ($result -eq 'Cancelled') {
+        Show-Problem -Text 'Die Reparatur wurde abgebrochen.' -Action 'Klicke auf **Nochmal versuchen** und dann bei Windows auf **Ja**.'
+        Set-PrimaryButton 'Nochmal versuchen' 'InstallAppleDriver'
+        return
+    }
+    $script:ConnectNote = 'Fertig. Zieh das Kabel jetzt kurz ab und steck es wieder an. Klappt es danach nicht: PC neu starten.'
+    Enter-Screen $script:Index
+}
+
+function Register-ResumeAfterRestart {
+    # Öffnet den Helfer nach dem Neustart einmal von selbst (HKCU\...\RunOnce, ohne Administrator).
+    try {
+        $exe = $null; $scriptPath = $null
+        if (Test-IsCompiledHost) { $exe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
+        else { $scriptPath = $script:ScriptPath }
+        $command = New-RunOnceCommand -ExePath $exe -ScriptPath $scriptPath
+        if (-not $command) { return }
+        $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+        if (-not (Test-Path -LiteralPath $key)) { $null = New-Item -Path $key -Force }
+        Set-ItemProperty -LiteralPath $key -Name 'WhoopPlusSetup' -Value $command
+        Write-SetupLog "Nach dem Neustart: $command"
+    }
+    catch { Write-SetupLog "Autostart nach Neustart nicht eingetragen: $($_.Exception.Message)" 'WARN' }
+}
+
+function Request-PcRestart {
+    param([string]$ResumeStep)
+    $ok = Confirm-Action ("Der PC startet jetzt neu.`n`nBitte speichere vorher alles, was noch offen ist.`n" +
+        'Danach öffnet sich dieser Helfer von selbst und macht weiter.')
+    if (-not $ok) {
+        Set-Status 'info' 'Kein Problem. Starte den PC später neu und öffne dann diesen Helfer wieder.'
+        return
+    }
+    $script:State.ResumeStep = $ResumeStep
+    $script:State.ResumeMode = $script:Mode
+    Save-SetupState $script:State
+    Register-ResumeAfterRestart
+    Write-SetupLog "Neustart, danach weiter bei $($script:Mode)/$ResumeStep"
+    try { Start-Process -FilePath (Get-SystemToolPath 'shutdown.exe') -ArgumentList '/r /t 5 /c "Whoop Plus Einrichtungshelfer: Neustart"' -WindowStyle Hidden }
+    catch {
+        Write-SetupLog "Neustart fehlgeschlagen: $($_.Exception.Message)" 'ERROR'
+        Show-Problem -Text 'Der Neustart hat nicht geklappt.' -Action 'Bitte starte den PC selbst neu (Start → Ein/Aus → Neu starten).'
+        return
+    }
+    $script:Ui.Form.Close()
+}
+
+function Add-AppleSoftwareStep {
+    # „Apple-Programm reparieren“: Schritt Apple-Programm direkt vor dem aktuellen Bildschirm einfügen und dorthin gehen.
+    $head = @()
+    if ($script:Index -gt 0) { $head = @($script:Plan[0..($script:Index - 1)]) }
+    $rest = @($script:Plan[$script:Index..($script:Plan.Count - 1)])
+    $script:Plan = [string[]](@($head) + @('AppleSoftware') + @($rest))
+    Enter-Screen $script:Index
 }
 
 function Invoke-AutoConnect {
     $script:ConnectStarted = Get-Date
     $script:ConnectHintShown = $false
+    $script:PnpOnlyTicks = 0
+    $script:ConnectDiagnosed = $false
     $first = Invoke-Check 'Test-IPhoneConnected'
     if ($first.Connected) {
         Write-SetupLog "iPhone erkannt ($($first.Via))"
@@ -2168,8 +2818,13 @@ function Invoke-AutoConnect {
     }
     Set-Busy $false
     Set-Status 'busy' 'Ich warte auf dein iPhone …'
+    if ($script:ConnectNote) {
+        Set-RichText $script:Ui.Note $script:ConnectNote
+        $script:ConnectNote = $null
+        Update-UiWidths
+    }
     Set-PrimaryButton $null $null
-    # Alle 2 s im Hintergrund nachsehen (das Fenster ruckelt dabei nicht).
+    # Alle 2 s im Hintergrund nachsehen. Erfolg nur, wenn der Apple-Gerätedienst das iPhone meldet (das braucht iloader).
     Start-ScreenTimer -IntervalMs 2000 -Action {
         $check = Invoke-Check 'Test-IPhoneConnected'
         if ($check.Connected) {
@@ -2178,7 +2833,18 @@ function Invoke-AutoConnect {
             Complete-AutoStep 'iPhone gefunden.' 1000
             return
         }
-        if (-not $script:ConnectHintShown -and ((Get-Date) - $script:ConnectStarted).TotalSeconds -gt 45) {
+        if ($check.PnpSeen) { $script:PnpOnlyTicks++ } else { $script:PnpOnlyTicks = 0 }
+        # Nach einer frischen iTunes-Installation bis ~30 s warten (dann Neustart anbieten), sonst nach ~6 s Fehlersuche.
+        $threshold = 3
+        if ($script:FreshAppleInstall) { $threshold = 15 }
+        if (-not $script:ConnectDiagnosed -and $script:PnpOnlyTicks -ge $threshold) {
+            # Windows sieht das iPhone, der Apple-Dienst aber nicht: Ursache suchen.
+            $script:ConnectDiagnosed = $true
+            Write-SetupLog 'iPhone nur von Windows erkannt (nicht vom Apple-Dienst) – starte Fehlersuche' 'WARN'
+            Show-ConnectDiagnosis
+            return
+        }
+        if (-not $script:ConnectHintShown -and -not $script:ConnectDiagnosed -and ((Get-Date) - $script:ConnectStarted).TotalSeconds -gt 45) {
             $script:ConnectHintShown = $true
             Write-SetupLog 'iPhone nach 45 s nicht erkannt' 'WARN'
             Set-RichText $script:Ui.Note 'Klappt es nicht? Probiere ein anderes Kabel oder einen anderen USB-Anschluss. Das iPhone muss entsperrt sein.'
@@ -2186,6 +2852,23 @@ function Invoke-AutoConnect {
             Update-UiWidths
         }
     }
+}
+
+function Show-ConnectDiagnosis {
+    Set-Status 'busy' 'Ich sehe dein iPhone und prüfe die Verbindung …'
+    $facts = Invoke-Check 'Get-ConnectFacts'
+    $diag = Get-ConnectDiagnosis $facts -FreshInstall:([bool]$script:FreshAppleInstall)
+    Write-SetupLog ("Verbindungsdiagnose: {0}`n{1}" -f $diag.Kind, ((Format-DiagnosticsReport $facts.Apple.Facts $facts) -join "`n"))
+    if ($diag.Kind -eq 'Ok') {
+        Stop-ScreenTimers
+        Complete-AutoStep 'iPhone gefunden.' 1000
+        return
+    }
+    Set-Status 'warn' ($diag.Text + "`n" + $diag.Action)
+    $action = $diag.ButtonAction
+    if ($action -eq 'Restart') { $action = 'Restart:Connect' }
+    Set-PrimaryButton $diag.ButtonText $action
+    Set-SecondaryButtons @(@{ Text = 'Nochmal prüfen'; Action = 'Retry' }, @{ Text = 'Trotzdem weiter'; Action = 'Next' })
 }
 
 function Get-DownloadDir {
@@ -2393,7 +3076,7 @@ function Invoke-SelfTest {
 
     try {
         $missing = @()
-        foreach ($mode in @('First', 'Full', 'NewPhone', 'Check', 'Expired', 'Pairing')) {
+        foreach ($mode in $script:Modes) {
             foreach ($id in (Get-SetupPlan -Mode $mode -State $null)) {
                 $def = Get-ScreenDefinition -Id $id -Mode $mode
                 if ($def.Icon -and -not (Get-EmbeddedAssetData).ContainsKey($def.Icon)) { $missing += "$id/$($def.Icon)" }
@@ -2440,8 +3123,14 @@ function Invoke-SelfTest {
             & $add 'Windows-Prüfung' ($info.Build -gt 0) ("{0} Build {1} {2} -> {3}" -f $support.Name, $info.Build, $info.NativeArchitecture, $support.Status)
         }
         catch { & $add 'Windows-Prüfung' $false $_.Exception.Message }
-        try { $a = Test-AppleSoftware; & $add 'Apple-Programm-Prüfung' $true ("vorhanden={0} ({1})" -f $a.Present, $a.Source) }
+        try { $a = Test-AppleSoftware; & $add 'Apple-Programm-Prüfung' $true ("{0} ({1})" -f $a.Status, $a.Source) }
         catch { & $add 'Apple-Programm-Prüfung' $false $_.Exception.Message }
+        try {
+            $cf = Get-ConnectFacts
+            $report = Format-DiagnosticsReport $cf.Apple.Facts $cf
+            & $add 'Verbindungs-Diagnose' ($report.Count -ge 4) ("{0} | {1}" -f (Get-ConnectDiagnosis $cf).Kind, ($report -join ' / '))
+        }
+        catch { & $add 'Verbindungs-Diagnose' $false $_.Exception.ToString() }
         try { $w = Find-Winget; & $add 'winget-Suche' $true ("{0}" -f $w) }
         catch { & $add 'winget-Suche' $false $_.Exception.Message }
         try { $i = Get-InstalledILoader; & $add 'iloader-Suche' $true ("{0}" -f (($i | ConvertTo-Json -Compress))) }
@@ -2453,7 +3142,7 @@ function Invoke-SelfTest {
             $form = New-MainForm
             foreach ($id in @('Welcome', 'Changed', 'Windows', 'AppleSoftware', 'VpnInstall', 'VpnConnect', 'Connect', 'ILoader', 'ILoaderLogin',
                     'ILoaderInstall', 'PhoneTrust', 'DevMode', 'SideStoreOpen', 'SideStoreRefresh', 'AddSource', 'Done', 'CheckDone',
-                    'PairingDelete', 'PairingSelect', 'PairingPlace', 'PairingDone')) {
+                    'PairingDelete', 'PairingSelect', 'PairingPlace', 'PairingDone', 'AppleConflict', 'ConnectDone')) {
                 Show-Screen (Get-ScreenDefinition -Id $id)
             }
             Set-Status 'ok' 'Test **fett**'

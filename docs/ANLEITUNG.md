@@ -149,6 +149,12 @@ WLAN an? **LocalDevVPN** auf **Connect**? Beide Apps einmal ganz schließen und 
 Er führt dich durch das Erneuern der Kopplung (etwa 2 Minuten). Von Hand:
 [TECHNIK.md unter „Pairing-Datei ersetzen“](TECHNIK.md#8-fehlerbehebung).
 
+**Der PC erkennt mein iPhone nicht.**
+(iloader meldet z. B. „Failed to connect to usbmuxd“, oder iTunes sieht das iPhone nicht.)
+Am PC den Helfer **WhoopPlus-Setup.exe** starten und die Kachel **Mein iPhone wird am PC nicht erkannt** wählen.
+Er sucht die Ursache, repariert iTunes bei Bedarf und startet den PC einmal neu – danach macht er von selbst weiter.
+Wichtig: Am PC nur **iTunes** von Apple verwenden, nicht zusätzlich die Store-App **Apple-Geräte**.
+
 **Das Band wird nicht gefunden.**
 Offizielle WHOOP-App schließen, Band laden und näher ans iPhone legen. In **Einstellungen** → **Bluetooth** beim
 WHOOP-Band auf **ⓘ** → **Dieses Gerät ignorieren**, dann in Whoop Plus erneut **Band verbinden**.
